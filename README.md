@@ -1,3 +1,4 @@
 # NaniteVigilante
 Vector Shooter
-This an original vector shooter vibe coded using Claude.
+This is an original vector shooter vibe coded using Claude.
+© Vinaude Software. All rights reserved.
