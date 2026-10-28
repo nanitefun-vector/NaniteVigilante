@@ -1,0 +1,2219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<script>
+/* Self-protection for the public site. The host (InfinityFree) ignores .htaccess, so the protections that can live inside the page are applied here,
+   only on the real site address (so previews and local testing are unaffected): a content policy that blocks every outside script, connection,
+   frame and form (the game needs none), no referrer sent, and the game blanks itself if another website tries to frame it. */
+(function(){if(["nanitevigilante.gamer.gd","nanitevigilante.netlify.app"].indexOf(location.hostname)<0)return;
+  function meta(k,v,c){var m=document.createElement("meta");m.setAttribute(k,v);m.content=c;document.head.appendChild(m);}
+  meta("http-equiv","Content-Security-Policy","default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'");
+  meta("name","referrer","no-referrer");
+  try{if(window.top!==window.self)document.documentElement.style.display="none";}catch(e){document.documentElement.style.display="none";}
+})();
+</script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Nanite Vigilante</title>
+<style>
+  :root{color-scheme:dark;}
+  html,body{margin:0;padding:0;background:#05050a;overflow:hidden;height:100%;
+    font-family:Consolas,"Courier New",monospace;touch-action:none;-webkit-user-select:none;user-select:none;}
+  #wrap{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;}
+  canvas{background:#05050a;image-rendering:crisp-edges;touch-action:none;}
+  #touch{position:fixed;inset:0;pointer-events:none;z-index:5;display:none;}
+  body.touchmode #touch{display:block;}
+  /* Touch layout: everything sits 3/4 of the way down the screen so thumbs rest on it naturally
+     when holding the phone with both hands. The stick is centred on that line at the left; the
+     three buttons fan out on an arc (about 45 degrees) around a thumb pivot on the right
+     (--rp from the right edge, 75% down): THRUST to its left, FIRE up-left, MSL above it. */
+  /* --k scales every control with the screen (1 on phones, up to 1.5 on tablets), set from the script in relayout().
+     The drawn circles are 12% smaller than their touch areas (the ::before scale) and quite transparent, so they cover less of the game while the
+     invisible touch targets keep their full size. */
+  :root{--k:1;--rp:calc(44px*var(--k) + env(safe-area-inset-right,0px));--lp:calc(44px*var(--k) + env(safe-area-inset-left,0px));}
+  .stick{position:absolute;left:calc(22px*var(--k) + env(safe-area-inset-left,0px));top:calc(75% - 65px*var(--k));width:calc(130px*var(--k));height:calc(130px*var(--k));
+    border-radius:50%;pointer-events:auto;}
+  .stick::before{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid rgba(80,230,255,.26);transform:scale(.88);pointer-events:none;}
+  .knob{position:absolute;left:calc(37px*var(--k));top:calc(37px*var(--k));width:calc(56px*var(--k));height:calc(56px*var(--k));border-radius:50%;
+    background:rgba(80,230,255,.2);border:2px solid rgba(80,230,255,.42);transform:scale(.88);pointer-events:none;}
+  .btn{position:absolute;pointer-events:auto;border-radius:50%;display:flex;align-items:center;isolation:isolate;
+    justify-content:center;color:rgba(205,221,238,.62);font-weight:bold;font-size:calc(13px*var(--k));}
+  .btn::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:50%;background:var(--bg);border:2px solid var(--bd);transform:scale(.88);pointer-events:none;}
+  .btn.active{color:#fff;}
+  .btn.active::before{background:var(--bga);border-color:var(--bda);}
+  #btnThrust{--bg:rgba(255,200,60,.13);--bd:rgba(255,200,60,.36);--bga:rgba(255,200,60,.38);--bda:rgba(255,200,60,.85);
+    right:calc(var(--rp) + 76px*var(--k));top:calc(75% - 20px*var(--k));width:calc(80px*var(--k));height:calc(80px*var(--k));}
+  #btnFire{--bg:rgba(255,235,90,.13);--bd:rgba(255,235,90,.36);--bga:rgba(255,235,90,.38);--bda:rgba(255,235,90,.85);
+    right:calc(var(--rp) + 53px*var(--k));top:calc(75% - 113px*var(--k));width:calc(74px*var(--k));height:calc(74px*var(--k));}
+  #btnMissile{--bg:rgba(255,150,40,.13);--bd:rgba(255,150,40,.36);--bga:rgba(255,150,40,.38);--bda:rgba(255,150,40,.85);
+    right:calc(var(--rp) - 18px*var(--k));top:calc(75% - 151px*var(--k));width:calc(68px*var(--k));height:calc(68px*var(--k));}
+  /* Left-handed layout: the whole touch layout mirrored (stick to the right, button arc to the left). */
+  body.lefty .stick{left:auto;right:calc(22px*var(--k) + env(safe-area-inset-right,0px));}
+  body.lefty #btnThrust{right:auto;left:calc(var(--lp) + 76px*var(--k));}
+  body.lefty #btnFire{right:auto;left:calc(var(--lp) + 53px*var(--k));}
+  body.lefty #btnMissile{right:auto;left:calc(var(--lp) - 18px*var(--k));}
+  /* Hand-swap pill: only shown (on touch devices) on the title and game-over screens - see Hand in the script. */
+  #btnHand{display:none;position:absolute;left:50%;bottom:calc(10px + env(safe-area-inset-bottom,0px));
+    transform:translateX(-50%);pointer-events:auto;-webkit-appearance:none;appearance:none;
+    font:12px Consolas,"Courier New",monospace;color:#9fd8e8;background:rgba(10,20,30,.75);
+    border:1px solid rgba(80,230,255,.5);border-radius:14px;padding:6px 14px;white-space:nowrap;}
+  body.showhand #btnHand{display:block;}
+  /* Pause button: a small round icon (pause bars / play triangle drawn as SVG, no text) at top centre just under the LEVEL / status text,
+     touch devices only, shown while a run is playing or paused. The ::before gives it a bigger invisible hit area than it looks. */
+  #btnPause{display:none;position:absolute;left:50%;top:calc(54px + env(safe-area-inset-top,0px));transform:translateX(-50%);
+    pointer-events:auto;-webkit-appearance:none;appearance:none;width:calc(34px*var(--k));height:calc(34px*var(--k));padding:0;border-radius:50%;
+    color:#cde;background:rgba(10,20,30,.7);border:1px solid rgba(80,230,255,.6);align-items:center;justify-content:center;}
+  #btnPause::before{content:"";position:absolute;left:-8px;right:-8px;top:-8px;bottom:-8px;border-radius:50%;}
+  #btnPause svg{width:calc(14px*var(--k));height:calc(14px*var(--k));fill:currentColor;pointer-events:none;}
+  #btnPause .ico-play{display:none;}
+  #btnPause.isPaused .ico-play{display:block;}
+  #btnPause.isPaused .ico-pause{display:none;}
+  body.showpause #btnPause{display:flex;}
+  #btnPause.active{filter:brightness(1.6);}
+  /* Mute button: small round speaker icon anchored to the canvas bottom-left (where the old SOUND ON text was); placed by placeMute(). */
+  #btnMute{position:fixed;z-index:6;left:10px;top:10px;width:calc(34px*var(--k));height:calc(34px*var(--k));padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    -webkit-appearance:none;appearance:none;color:#9fd8e8;background:rgba(10,20,30,.7);border:1px solid rgba(80,230,255,.5);cursor:pointer;}
+  #btnMute::before{content:"";position:absolute;left:-8px;right:-8px;top:-8px;bottom:-8px;border-radius:50%;}
+  #btnMute svg{width:calc(18px*var(--k));height:calc(18px*var(--k));fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;}
+  #btnMute .ico-off{display:none;}
+  #btnMute.muted{color:#ff9a4a;border-color:rgba(255,150,40,.7);}
+  #btnMute.muted .ico-on{display:none;}
+  #btnMute.muted .ico-off{display:block;}
+  #btnMute.hidden{display:none;}
+  /* A game controller is in use: hide the on-screen stick and fire/thrust/missile buttons (a touch brings them back). */
+  body.padmode .stick,body.padmode #btnThrust,body.padmode #btnFire,body.padmode #btnMissile{display:none;}
+  #hint{position:fixed;bottom:6px;width:100%;text-align:center;color:#557;font-size:11px;z-index:6;pointer-events:none;}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv" width="1000" height="750"></canvas></div>
+<button type="button" id="btnMute" aria-label="Mute sound">
+  <svg class="ico-on" viewBox="0 0 18 18"><path d="M2.5 7 H5.5 L9.5 3.5 V14.5 L5.5 11 H2.5 Z"/><path d="M12 6.5 Q14 9 12 11.5"/><path d="M14.3 4.5 Q17.5 9 14.3 13.5"/></svg>
+  <svg class="ico-off" viewBox="0 0 18 18"><path d="M2.5 7 H5.5 L9.5 3.5 V14.5 L5.5 11 H2.5 Z"/><path d="M12.5 6.8 L16.5 11.2"/><path d="M16.5 6.8 L12.5 11.2"/></svg>
+</button>
+<div id="touch">
+  <div class="stick" id="stick"><div class="knob" id="knob"></div></div>
+  <div class="btn" id="btnThrust">THRUST</div>
+  <div class="btn" id="btnFire">FIRE</div>
+  <div class="btn" id="btnMissile">MSL</div>
+  <button type="button" id="btnHand"></button>
+  <button type="button" id="btnPause" aria-label="Pause">
+    <svg class="ico-pause" viewBox="0 0 14 14"><rect x="2.5" y="1.5" width="3.2" height="11" rx=".6"/><rect x="8.3" y="1.5" width="3.2" height="11" rx=".6"/></svg>
+    <svg class="ico-play" viewBox="0 0 14 14"><path d="M3.5 1.5 L12 7 L3.5 12.5 Z"/></svg>
+  </button>
+</div>
+<div id="hint"></div>
+<script>
+"use strict";
+const CFG={W:1000,H:750,FPS:60,
+  playerR:12,rotSpd:220,thrustAcc:420,maxSpd:340,fric:6,invulnT:2,respawnT:1.2,
+  bulSpd:560,bulLife:1.1,bulR:3,bulCd:.14,
+  msCount:3,msSpd:300,msLife:3.5,msR:5,blastR:130,msArm:.15,
+  kmR:14,kmSpd:120,kmTurn:140,
+  gnR:14,gnSpd:90,gnRange:260,gnCd:1.6,gnBulSpd:320,gnHp:2,
+  mlR:16,mlSpd:70,mlCd:2.6,mlHp:3,
+  mineR:10,mineArm:.6,mineLife:14,
+  mineTrackStartD:5,mineTrackFullD:16,mineTrackMaxSpd:110, // parasite spore mines: no homing until diffIndex 5, ramps to full strength by 16, capped well under player's 340 top speed
+  bossR:46,bossHp0:140,bossHpTier:60,bossSpd:95,bossHpCapTier:8,bossSpeedMultCap:2.4,
+  bulDmgBossFrac:.009,msDmgBossFrac:.25, // bullet/missile damage to the boss, as a fraction of its (capped) max HP
+  bossMineTrackStartTier:9,bossMineTrackFullTier:13,bossMineTrackMaxSpd:110, // boss mines pick up the parasite's homing past the HP cap
+  laserWarn:.7,laserFire:.6,laserCd:3.2,laserW:14,laserTick:.15,bossMineCd:2.4,
+  scK:150,scG:200,scM:175,scMine:50,scBoss:5000,cycle:4,extraLifeScore:8000,
+  bossDebris:24,bossHitstop:.12,bossShake:18,bossFinalDelay:.5,bossFinalShake:24,
+  // Bonus round: fires after every 2nd tier's boss (tier 2,4,6... i.e. right after
+  // levels 8,16,24...). CFG.bonusWaves waves of CFG.bonusSquadron targets each, flown single
+  // file along one shared path; no life lost from contact (pure precision/speed
+  // bonus, like a classic arcade challenge stage) - see startBonusRound()/updateBonusWave().
+  // A wave earns a missile when at least bonusMissilePct of its targets are hit.
+  // (4 waves x 20 targets = 80 per round; bonusScorePer is kept low enough that a
+  // flawless round, 80 x 90 = 7200, stays under one extra life's worth, extraLifeScore.)
+  bonusSquadron:20,bonusWaves:4,bonusSpawnGap:.4,bonusMissilePct:.6,
+  bonusIntroTime:2.6,bonusWaveResultTime:1.7,bonusFinalTime:3.4,
+  bonusBaseDur:3.8,bonusDurMinMult:.6,bonusDurStep:.07, // later bonus rounds fly their paths faster (shorter duration)
+  bonusScorePer:90,bonusLoopAmp:150,bonusZigAmp:70,bonusZigCount:3,
+  // Anti-stall: if parasites are the only enemies left on a level, their mines
+  // are otherwise free, safe points (the minelayer flees once you're close,
+  // so you can farm drops from a distance forever). After stallTime seconds of
+  // that condition, parasites stop fleeing and charge. Enraged speed is an absolute
+  // stallSpeed (above the player's maxSpd so you can't outrun it) and its turn
+  // rate is multiplied by stallTurnMult (so circling it doesn't work either).
+  stallTime:30,stallSpeed:390,stallTurnMult:3.5,
+  // Boss anti-turtle (tiers below bossMineTrackStartTier only - from there the
+  // boss's homing mines already keep up the pressure): once the boss has gone
+  // bossStallGrace seconds without taking any damage, it ramps over bossStallRamp
+  // seconds to bossStallSpeed extra speed and a bossStallLaser shorter laser
+  // cooldown. Any hit on the boss resets it.
+  bossStallGrace:15,bossStallRamp:30,bossStallSpeed:.8,bossStallLaser:.55,
+  // Amoeba boss: slow tentacles instead of the genome strand. tentSpd = px/s a tentacle extends, tentMax = full reach, tentW = hit width,
+  // tentTurn = deg/s a tentacle steers toward you.
+  // Tardigrade boss: an armoured body that only its sticky tongue can hurt. tardiReach = tongue length, tardiShoot/tardiRetract = tongue speeds (px/s),
+  // tardiWind = aiming wind-up, tardiCd = rest between shots, tardiReel = seconds a stuck ship has before it is reeled to the mouth (shrinks 10% per
+  // appearance to tardiReelMin), tardiGrip0..tardiGripMax = bullets on the tongue needed to break free (+1 every 2nd appearance),
+  // tardiTongueDmg = a tongue hit does this many times a normal bullet's boss damage.
+  tardiMineSpd:55,tardiMineStep:14,tardiMineMax:120,tardiR:60,tardiBodyR:40,tardiReach:520,tardiShoot:640,tardiRetract:820,tardiW:12,tardiWind:.55,tardiCd:2.4,
+  tardiReel:2.5,tardiReelMin:1.4,tardiGrip0:6,tardiGripMax:9,tardiTongueDmg:6,
+  amoebaR:62,tentSpd:85,tentMax:380,tentW:12,tentTurn:16,
+  // Heartbeat + ECG: a background "lub-dub" and a small scrolling EKG trace that
+  // speed up as lives run low (see heartBpmFor) and flatline on game over.
+  // heartStep = seconds per EKG sample, heartSamples = samples kept on screen.
+  heartStep:1/150,heartSamples:360};
+const COL={player:"#50e6ff",flame:"#ffc83c",bullet:"#ffeb5a",bulletE:"#ff8282",
+  missile:"#ff9628",missileArm:"#ff3c3c",kami:"#5e5ce6",gun:"#ff5adc",mine_:"#aa6eff",
+  mine:"#ff6464",mineCore:"#ffd25a",boss:"#ff8c2e",laserWarn:"#ff3c3c",laser:"#ffe63c",
+  bossTardi:"#e8c681",tardiTongue:"#ff9a2e",tardiTip:"#ff3030",bossAmoeba:"#b266ff",bossAmoebaLite:"#e3c9ff",bossMine:"#ffa63e",bossMineCore:"#9dff4a",amoebaCore:"#9dff4a",accent:"#9dff4a",
+  hud:"#c8e6ff",hudDim:"#78969a",white:"#f0f0f5"};
+
+// ---------- math ----------
+const V=(x,y)=>({x,y});
+const add=(a,b)=>V(a.x+b.x,a.y+b.y);
+const sub=(a,b)=>V(a.x-b.x,a.y-b.y);
+const mul=(a,s)=>V(a.x*s,a.y*s);
+const len=a=>Math.hypot(a.x,a.y);
+const norm=a=>{const l=len(a)||1;return V(a.x/l,a.y/l);};
+const fwd=deg=>V(Math.cos(deg*Math.PI/180),Math.sin(deg*Math.PI/180));
+const dist=(a,b)=>len(sub(a,b));
+const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+function shortAngle(cur,tgt){let d=(tgt-cur+180)%360-180;if(d<-180)d+=360;return d;}
+function angleTo(a,b){const d=sub(b,a);return Math.atan2(d.y,d.x)*180/Math.PI;}
+function wrap(p,m=24){let x=p.x,y=p.y;
+  if(x<-m)x=CFG.W+m;else if(x>CFG.W+m)x=-m;
+  if(y<-m)y=CFG.H+m;else if(y>CFG.H+m)y=-m;
+  return V(x,y);}
+function rndEdge(){const s=Math.floor(Math.random()*4),m=40;
+  if(s===0)return V(Math.random()*CFG.W,-m);
+  if(s===1)return V(Math.random()*CFG.W,CFG.H+m);
+  if(s===2)return V(-m,Math.random()*CFG.H);
+  return V(CFG.W+m,Math.random()*CFG.H);}
+function rotPts(pts,ang){const r=ang*Math.PI/180,c=Math.cos(r),s=Math.sin(r);
+  return pts.map(p=>V(p[0]*c-p[1]*s,p[0]*s+p[1]*c));}
+
+// ---------- shapes ----------
+// Battlefield is the bloodstream: the player pilots a nanite ship fighting off
+// pathogens. Each shape is a list of parts (polylines); closed parts stroke as
+// a closed loop, open parts as a bare line, so a single "ship" can combine a
+// solid hull with wispy, non-closed detail (flagella, phage legs, cilia).
+const PARTS={ // static bodies only - animated appendages are generated per-frame below
+  player:[ // nanite ship (V44 double-V): slim forked nose with red stripes, small V + big V forward-swept wings, red diamond core, notched tail where the thrust exits. Nose +x; per-part col.
+    {pts:[[11.82,0],[12.26,0.24],[13.61,0.56],[15.4,0.85],[15.74,0.97],[15.29,1.13],[13.16,1.61],[10.64,2.34],[8.12,2.58],[5.6,2.54],[3.92,2.1],[2.52,1.61],[1.1,1.5],[2.6,3.09],[3.98,6.33],[0.85,4.73],[-2.2,1.45],[-6.5,1.4],[-1.85,6.42],[1,11.24],[-3.6,8.05],[-9.8,1.4],[-11.8,1.3],[-9.7,0],[-11.8,-1.3],[-9.8,-1.4],[-3.6,-8.05],[1,-11.24],[-1.85,-6.42],[-6.5,-1.4],[-2.2,-1.45],[0.85,-4.73],[3.98,-6.33],[2.6,-3.09],[1.1,-1.5],[2.52,-1.61],[3.92,-2.1],[5.6,-2.54],[8.12,-2.58],[10.64,-2.34],[13.16,-1.61],[15.29,-1.13],[15.74,-0.97],[15.4,-0.85],[13.61,-0.56],[12.26,-0.24]],closed:true,col:"#50e6ff"},
+    {pts:[[11.59,1.21],[9.91,1.94],[7.56,2.17],[5.6,2.22],[5.88,1.97],[7.84,1.86],[9.8,1.61],[11.26,1.13]],closed:true,col:"#ff4a4a"},
+    {pts:[[11.59,-1.21],[9.91,-1.94],[7.56,-2.17],[5.6,-2.22],[5.88,-1.97],[7.84,-1.86],[9.8,-1.61],[11.26,-1.13]],closed:true,col:"#ff4a4a"},
+    {pts:[[1.1,1.2],[2.6,0],[1.1,-1.2],[-0.4,0]],closed:true,col:"#ff4a4a"}],
+  kami:[ // "BACTERIUM" - a darting rod-shaped cell; flagellum is animated separately
+    {pts:[[14,0],[5,6],[-9,5],[-12,0],[-9,-5],[5,-6]],closed:true},
+    {pts:[[-1,2],[2,0],[-1,-2],[-4,0]],closed:true,col:COL.accent}], // nucleoid
+  gun:[ // "PHAGE" - classic bacteriophage; leg fibers are animated separately
+    {pts:[[14,6],[14,-6],[7,-10],[0,-6],[0,6],[7,10]],closed:true}, // capsid head
+    {pts:[[0,-2.5],[0,2.5],[-10,2.5],[-10,-2.5]],closed:true}, // tail sheath
+    {pts:[[4.84,2.52],[9.16,2.52],[10.6,0],[9.16,-2.52],[4.84,-2.52],[3.4,0]],closed:true,col:COL.accent}], // lime hexagon core in the head
+  mine:[ // "PARASITE" - a slender daddy-long-legs body; legs are animated separately.
+         // Same width as before (-4..4), just stretched longer front-to-back.
+    {pts:[[-15,-4],[6,-4],[15,0],[6,4],[-15,4],[-18,0]],closed:true},
+    {pts:[[-6,0],[-1,-2.2],[4,0],[-1,2.2]],closed:true,col:COL.accent}]}; // + lime core
+PARTS.mineEnraged=PARTS.mine.map(p=>({pts:p.pts,closed:p.closed})); // same shape, single color (red) while enraged
+// Collision radii for bonus-round targets, reusing each kind's normal-play size
+// (amoeba has no normal "enemy" entity - it's only ever drawn for dropped mines -
+// so it gets its own radius here, sized like the others).
+const BONUS_R={kami:CFG.kmR,gun:CFG.gnR,mine:CFG.mlR,amoeba:13,worm:13,flu:13,tardi:14};
+
+// Animated appendages. `seed` (per-entity, set at spawn) desyncs same-kind
+// enemies so a cluster doesn't move in creepy lockstep; `frame` is G.frame,
+// which advances every rendered frame regardless of game state.
+function flagellumParts(seed,frame){ // bacterium: a whip-like tail, wave growing toward the tip
+  const n=5,pts=[[-12,0]];
+  for(let i=1;i<=n;i++){
+    const t=i/n,x=-12-t*19,amp=1.5+t*3.5;
+    pts.push([x,Math.sin(frame*.35+seed+t*5)*amp]);
+  }
+  return[{pts,closed:false}];
+}
+function phageLegParts(seed,frame){ // phage: leg fibers undulate like they're treading water
+  const osc=ph=>Math.sin(frame*.3+seed+ph)*2.2;
+  return[
+    {pts:[[-10,-2],[-16,-7+osc(0)],[-20,-5+osc(.6)]],closed:false},
+    {pts:[[-10,2],[-16,7+osc(Math.PI)],[-20,5+osc(Math.PI+.6)]],closed:false},
+    {pts:[[-10,-1],[-18,-2+osc(1.5)]],closed:false},
+    {pts:[[-10,1],[-18,2+osc(1.5+Math.PI)]],closed:false}];
+}
+function parasiteLegParts(seed,frame){ // parasite: 8 long, spindly "daddy long legs"
+  // walking gait - a traveling wave runs front-to-back along each side (a
+  // metachronal wave, the way real arthropod legs step in sequence rather
+  // than all together), with the two sides a half-cycle out of phase.
+  // Each leg has a real knee: the femur juts sharply outward past where the
+  // foot ends up, then the tibia angles back in to the foot - a visible bend
+  // like a tarantula's leg, rather than one straight line to the foot. Legs
+  // stay fairly short relative to the body - they don't need to span its
+  // full length, just enough to look spindly and raised off it.
+  const xs=[-8,-2,3,8],legs=[];
+  for(let side=0;side<2;side++){
+    const sgn=side===0?-1:1,hy=sgn*4;
+    for(let i=0;i<4;i++){
+      const hx=xs[i],dir=i<2?-1:1; // front legs angle fwd, rear legs angle back
+      const phase=frame*.26+seed+i*1.3+side*Math.PI;
+      const swing=Math.sin(phase);
+      const stepX=swing*5,lift=Math.max(0,swing)*3;
+      const knee=[hx+dir*9+stepX*.35,hy+sgn*(13-lift*.4)]; // bends out wide
+      const foot=[hx+dir*3+stepX,hy+sgn*(25-lift)]; // tucks back in to plant
+      legs.push({pts:[[hx,hy],knee,foot],closed:false});
+    }
+  }
+  return legs;
+}
+
+// ---------- hand-authored vector stroke font ----------
+// Each glyph is a list of strokes; each stroke is a polyline of [x,y] points
+// on a 4-wide x 6-tall grid. Multiple strokes per glyph = separate pen lifts.
+const VFONT_W=4, VFONT_H=6;
+const VFONT={
+  V:[[[0,0],[2,6],[4,0]]],
+  E:[[[3.2,0],[0,0],[0,6],[3.2,6]],[[0,3],[2.6,3]]],
+  C:[[[3.6,1.2],[2.2,0],[1,0.3],[0.2,1.5],[0,3],[0.2,4.5],[1,5.7],[2.2,6],[3.6,4.8]]],
+  T:[[[0,0],[4,0]],[[2,0],[2,6]]],
+  O:[[[1.2,0],[2.8,0],[4,1.3],[4,4.7],[2.8,6],[1.2,6],[0,4.7],[0,1.3],[1.2,0]]],
+  R:[[[0,6],[0,0],[2.6,0],[3.6,.9],[3.6,2.1],[2.6,3],[0,3]],[[1.6,3],[3.8,6]]],
+  S:[[[3.8,1.1],[2.6,0],[1.1,0],[0,1],[0,2.2],[1,3],[3,3],[4,3.9],[4,5],[2.9,6],[1.4,6],[.2,4.9]]],
+  I:[[[1,0],[3,0]],[[2,0],[2,6]],[[1,6],[3,6]]],
+  G:[[[3.6,1.2],[2.2,0],[1,0.3],[0.2,1.5],[0,3],[0.2,4.5],[1,5.7],[2.2,6],[3.6,4.8],[3.6,3.2],[2.2,3.2]]],
+  Z:[[[0,0],[4,0],[0,6],[4,6]]],
+  N:[[[0,6],[0,0],[4,6],[4,0]]],
+  L:[[[0,0],[0,6],[3.4,6]]],
+  A:[[[0,6],[2,0],[4,6]],[[.9,3.8],[3.1,3.8]]],
+  D:[[[0,0],[0,6]],[[0,0],[2.4,0],[3.8,1.4],[3.8,4.6],[2.4,6],[0,6]]],
+  B:[[[0,0],[0,6]],[[0,0],[2.2,0],[3.4,.9],[3.4,2.1],[2.2,3],[0,3]],
+     [[0,3],[2.4,3],[3.6,3.9],[3.6,5.1],[2.4,6],[0,6]]],
+  F:[[[3.2,0],[0,0],[0,6]],[[0,3],[2.6,3]]],
+  H:[[[0,0],[0,6]],[[4,0],[4,6]],[[0,3],[4,3]]],
+  J:[[[3,0],[3,4.5],[2.3,5.7],[1,6],[0,5]]],
+  K:[[[0,0],[0,6]],[[3.6,0],[0,3.2]],[[0,3],[3.8,6]]],
+  M:[[[0,6],[0,0],[2,3.2],[4,0],[4,6]]],
+  P:[[[0,6],[0,0],[2.4,0],[3.6,.9],[3.6,2.3],[2.4,3.2],[0,3.2]]],
+  Q:[[[1.2,0],[2.8,0],[4,1.3],[4,4.7],[2.8,6],[1.2,6],[0,4.7],[0,1.3],[1.2,0]],[[2.2,4.2],[4,6.4]]],
+  U:[[[0,0],[0,4],[1.2,6],[2.8,6],[4,4],[4,0]]],
+  W:[[[0,0],[1,6],[2,2.5],[3,6],[4,0]]],
+  X:[[[0,0],[4,6]],[[4,0],[0,6]]],
+  Y:[[[0,0],[2,3.2]],[[4,0],[2,3.2]],[[2,3.2],[2,6]]],
+  "0":[[[1.2,0],[2.8,0],[4,1.3],[4,4.7],[2.8,6],[1.2,6],[0,4.7],[0,1.3],[1.2,0]]],
+  "1":[[[1,1.2],[2,0],[2,6]],[[1.1,6],[2.9,6]]],
+  "2":[[[.2,1.3],[1.3,0],[2.9,0],[4,1.1],[4,2],[0,6],[4,6]]],
+  "3":[[[.3,.6],[1.8,0],[3.3,.5],[3.8,1.6],[3.8,2.4],[2.6,3],[3.8,3.6],[3.8,4.8],[3.2,5.7],[1.6,6],[.2,5.3]]],
+  "4":[[[2.7,0],[2.7,6]],[[2.7,0],[0,4],[4,4]]],
+  "5":[[[4,0],[.2,0],[0,2.8],[2.6,2.6],[3.9,3.4],[4,4.9],[3,5.9],[1.4,6],[.2,5.2]]],
+  "6":[[[3.4,.4],[1.7,0],[.4,1.4],[0,3.6],[.3,5.1],[1.5,6],[2.9,5.9],[3.9,4.9],[3.9,3.5],[2.9,2.6],[1.1,2.7],[.2,3.6]]],
+  "7":[[[0,0],[4,0],[1.3,6]]],
+  "8":[[[1.6,3],[.3,2.2],[.4,.8],[1.7,0],[2.5,0],[3.6,.8],[3.7,2.2],[2.4,3],[1.6,3]],
+       [[1.6,3],[.3,3.9],[.3,5.2],[1.5,6],[2.6,6],[3.7,5.2],[3.6,3.8],[2.4,3]]],
+  "9":[[[1.3,0],[2.7,0],[3.8,1.1],[3.8,2.3],[2.7,3.2],[1.3,3.2],[.2,2.3],[.2,1.1],[1.3,0]],
+       [[3.6,1.8],[3.8,3.5],[3.2,5],[1.8,6]]],
+};
+function drawVText(str,cx,cy,scale,color,lw,rotDeg){
+  rotDeg=rotDeg||0;
+  const spacing=VFONT_W+1.1;
+  const totalW=str.length*spacing-1.1;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(rotDeg*Math.PI/180);
+  ctx.strokeStyle=color;ctx.lineWidth=lw;ctx.lineJoin="round";ctx.lineCap="round";
+  for(let i=0;i<str.length;i++){
+    const ch=str[i].toUpperCase();
+    if(ch===" "||!VFONT[ch])continue;
+    const gx=(i*spacing-totalW/2)*scale;
+    for(const stroke of VFONT[ch]){
+      ctx.beginPath();
+      for(let j=0;j<stroke.length;j++){
+        const px=gx+(stroke[j][0]-VFONT_W/2)*scale;
+        const py=(stroke[j][1]-VFONT_H/2)*scale;
+        if(j===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+function measureVText(str,scale){
+  const spacing=VFONT_W+1.1;
+  return (str.length*spacing-1.1)*scale;
+}
+
+// ---------- audio (procedural, Web Audio) ----------
+const Snd=(()=>{
+  let ctx=null,laserOsc=null,laserOsc2=null,laserLfo=null,laserFilter=null,laserGain=null;
+  let thrustOsc=null,thrustLfo=null,thrustNoise=null,thrustGain=null;
+  let master=null,outGain=null,muted=false;try{muted=localStorage.getItem('nanite_vigilante_mute')==='1';}catch(e){}
+   // everything routes through this: a limiter, so busy moments (explosions + laser + heartbeat) squash instead of clipping
+  function ensure(){if(!ctx){try{ctx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){ctx=null;}
+      if(ctx){try{const c=ctx.createDynamicsCompressor();
+          c.threshold.value=-6;c.knee.value=6;c.ratio.value=12;c.attack.value=.003;c.release.value=.2;
+          try{outGain=ctx.createGain();outGain.gain.value=muted?0:1;c.connect(outGain);outGain.connect(ctx.destination);}catch(e){outGain=null;c.connect(ctx.destination);}
+          master=c;}catch(e){master=ctx.destination;}}}
+    if(ctx&&ctx.state==="suspended")ctx.resume();}
+  // Connect a sound's last node to the master bus, optionally panned left/right by
+  // the on-screen x position of its source (0..CFG.W), capped at 75% so it never goes fully one-sided.
+  function out(node,x){
+    if(x!==undefined&&ctx.createStereoPanner){
+      try{const p=ctx.createStereoPanner();p.pan.value=clamp((x/CFG.W-.5)*2*.75,-.75,.75);
+        node.connect(p);p.connect(master);return;}catch(e){}}
+    node.connect(master);}
+  function tone(f0,f1,dur,vol,type,x){ensure();if(!ctx)return;
+    const t=ctx.currentTime,o=ctx.createOscillator(),g=ctx.createGain();
+    o.type=type||"sine";o.frequency.setValueAtTime(f0,t);o.frequency.linearRampToValueAtTime(f1,t+dur);
+    g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
+    o.connect(g);out(g,x);o.start(t);o.stop(t+dur+.02);}
+  function noise(dur,vol,rumble,x){ensure();if(!ctx)return;
+    const n=Math.floor(ctx.sampleRate*dur),buf=ctx.createBuffer(1,n,ctx.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<n;i++){const frac=i/n,env=Math.pow(1-frac,2);
+      let v=(Math.random()*2-1);
+      if(rumble)v=v*(1-rumble)+Math.sin(i/ctx.sampleRate*2*Math.PI*(rumble>.35?55:70))*rumble;
+      d[i]=v*env;}
+    const src=ctx.createBufferSource(),g=ctx.createGain();src.buffer=buf;
+    g.gain.value=vol;src.connect(g);out(g,x);src.start();}
+
+  // ---------- title-screen theme (generated live with Web Audio, no audio files) ----------
+  // 62 BPM - the same resting pulse as the in-game heartbeat - in A minor: a slow 4-bar loop of
+  // Am / F / Dm / E, with a dark detuned pad, a sub bass, a "lub-dub" heart pulse on every beat, a soft
+  // arpeggio through a feedback echo, and a few sparse high notes. Everything goes through one music bus
+  // (fades in/out) into the master limiter, so the mute button silences it too.
+  const MUS={bpm:140,
+    // 8-bar loop in A minor: Am F C G | Am F Dm E. root = bass MIDI note, ch = arp chord tones, mel = lead melody in 8th-note slots (0 = rest)
+    bars:[
+      {root:45,ch:[57,60,64],mel:[69,72,76,0,81,0,79,76]},
+      {root:41,ch:[53,57,60],mel:[77,0,81,0,84,81,79,77]},
+      {root:48,ch:[60,64,67],mel:[76,0,79,0,84,0,83,79]},
+      {root:43,ch:[59,62,67],mel:[79,0,83,0,86,83,79,74]},
+      {root:45,ch:[57,60,64],mel:[81,0,76,0,81,84,83,81]},
+      {root:41,ch:[53,57,60],mel:[77,0,81,84,81,0,79,77]},
+      {root:50,ch:[62,65,69],mel:[74,0,77,0,81,0,77,74]},
+      {root:40,ch:[56,59,64],mel:[76,0,80,0,83,0,80,76]}],
+    // slap-bass pattern per 16th step: T = thumb (low, fat), P = pop (octave up, bright), Q = pop on the fifth above, g = muted ghost note, . = rest
+    slapA:"T.gP.gT.TgP.gTPg".split(""), slapB:"T.gP.gT.TgP.TgQQ".split("")};
+  let musBus=null,musDelay=null,musTimer=null,musRun=false,musNext=0,musStep=0,musStopT=null,musNoise=null;
+  const mf=m=>440*Math.pow(2,(m-69)/12);
+  function mTone(t,f0,f1,dur,vol,type,dest){const o=ctx.createOscillator(),g=ctx.createGain();
+    o.type=type||"sine";o.frequency.setValueAtTime(f0,t);if(f1!==f0)o.frequency.exponentialRampToValueAtTime(f1,t+dur);
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol,t+.008);g.gain.exponentialRampToValueAtTime(.0008,t+dur);
+    o.connect(g);g.connect(dest||musBus);o.start(t);o.stop(t+dur+.03);}
+  function mNoise(t,dur,vol,hp,lp){const src=ctx.createBufferSource();src.buffer=musNoise;
+    const h=ctx.createBiquadFilter();h.type="highpass";h.frequency.value=hp;
+    const l=ctx.createBiquadFilter();l.type="lowpass";l.frequency.value=lp;
+    const g=ctx.createGain();g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(.0008,t+dur);
+    src.connect(h);h.connect(l);l.connect(g);g.connect(musBus);src.start(t);src.stop(t+dur+.02);}
+  function mBass(t,note,dur,vol){const f=mf(note);
+    const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.Q.value=2;
+    lp.frequency.setValueAtTime(1400,t);lp.frequency.exponentialRampToValueAtTime(260,t+dur);
+    const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol,t+.005);g.gain.exponentialRampToValueAtTime(.0008,t+dur);
+    const o=ctx.createOscillator();o.type="sawtooth";o.frequency.value=f;o.connect(lp);lp.connect(g);g.connect(musBus);o.start(t);o.stop(t+dur+.02);
+    mTone(t,f,f,dur,vol*.8,"sine");}
+  function mSlap(t,note,kind,s16){
+    if(kind==="g"){mNoise(t,.035,.07,350,1800);return;}
+    const click=(vol)=>mNoise(t,.012,vol,1800,7000);
+    if(kind==="T"){ // thumb: resonant filter "bwow" on a fat saw+square, a sine on the fundamental, a sub an octave below, and a quick click
+      const f=mf(note),dur=s16*2.6;
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.Q.value=7;
+      lp.frequency.setValueAtTime(2600,t);lp.frequency.exponentialRampToValueAtTime(240,t+.14);
+      const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.28,t+.004);
+      g.gain.exponentialRampToValueAtTime(.12,t+.1);g.gain.exponentialRampToValueAtTime(.0008,t+dur);
+      lp.connect(g);g.connect(musBus);
+      ["sawtooth","square"].forEach(ty=>{const o=ctx.createOscillator();o.type=ty;o.frequency.value=f;o.connect(lp);o.start(t);o.stop(t+dur+.02);});
+      mTone(t,f,f,dur,.24,"sine");mTone(t,f*2,f*2,dur*.8,.18,"sine");click(.09);return;}
+    // pop: short, bright, snappy, an octave (or fifth+octave) above
+    const f=mf(note+(kind==="Q"?19:12)),dur=s16*1.3;
+    const bp=ctx.createBiquadFilter();bp.type="bandpass";bp.Q.value=1.6;
+    bp.frequency.setValueAtTime(3200,t);bp.frequency.exponentialRampToValueAtTime(900,t+.08);
+    const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.3,t+.003);g.gain.exponentialRampToValueAtTime(.0008,t+dur);
+    bp.connect(g);g.connect(musBus);
+    ["sawtooth","square"].forEach(ty=>{const o=ctx.createOscillator();o.type=ty;o.frequency.value=f;o.connect(bp);o.start(t);o.stop(t+dur+.02);});
+    click(.12);}
+  // Second bass: a wide "reese" - three detuned saws through a lowpass that opens across the bar - holding the chord root underneath
+  // the slap line, stepping up to the fifth on the last beat of odd bars, and ducking on every kick so it pumps with the heartbeat.
+  function mReese(t,note,bi){
+    const beat=60/MUS.bpm,len=beat*4,f=mf(note);
+    const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.Q.value=3;
+    lp.frequency.setValueAtTime(320,t);lp.frequency.linearRampToValueAtTime(1100,t+len*.9);
+    const g=ctx.createGain();g.gain.setValueAtTime(0,t);
+    for(let k=0;k<4;k++){const tb=t+k*beat;g.gain.setValueAtTime(.025,tb);g.gain.linearRampToValueAtTime(.1,tb+beat*.5);}
+    g.gain.setValueAtTime(0,t+len+.02);
+    lp.connect(g);g.connect(musBus);
+    [-14,0,14].forEach(c=>{const o=ctx.createOscillator();o.type="sawtooth";o.detune.value=c;o.frequency.setValueAtTime(f,t);
+      if(bi%2===1)o.frequency.setValueAtTime(f*1.4983,t+beat*3);
+      o.connect(lp);o.start(t);o.stop(t+len+.04);});
+    mTone(t,f,f,len,.12,"sine");}
+  function mLead(t,note,dur,vol){const f=mf(note);
+    const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=3200;
+    const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(vol,t+.01);
+    g.gain.setValueAtTime(vol*.8,t+dur*.6);g.gain.linearRampToValueAtTime(0,t+dur);
+    lp.connect(g);g.connect(musBus);g.connect(musDelay);
+    [-6,6].forEach((c,i)=>{const o=ctx.createOscillator();o.type=i?"sawtooth":"square";o.frequency.value=f;o.detune.value=c;
+      o.connect(lp);o.start(t);o.stop(t+dur+.02);});}
+  function mSchedule(step,t){ // 16th-note grid: 16 steps per bar, 8 bars
+    const beat=60/MUS.bpm,s16=beat/4,bar=MUS.bars[Math.floor(step/16)%8],sb=step%16;
+    const bi=Math.floor(step/16)%8,pass=Math.floor(step/128)%2,fill=bi===3||bi===7,roll=(bi===7||(bi===3&&pass===1))&&sb>=12;
+    // KICK: the heart "lub" on every beat (the "dub" follows beats 1 and 3), plus syncopated extra kicks
+    if(sb%4===0){mTone(t,70,34,.15,.38,"sine");mTone(t,140,70,.09,.1,"triangle");mNoise(t,.01,.08,1500,6000);
+      if(sb%8===0){mTone(t+.13,84,44,.10,.22,"sine");}}
+    if(sb===10||(bi%2===1&&sb===7)||(bi%4===3&&sb===14)){mTone(t,66,36,.12,.3,"sine");mNoise(t,.01,.07,1500,6000);}
+    // SNARE + CLAP stacked on beats 2 and 4, with a soft ghost snare before beat 1 on odd bars
+    if((sb===4||sb===12)&&!roll){mNoise(t,.18,.23,1300,9500);mTone(t,200,120,.10,.09,"triangle");
+      [0,.011,.022].forEach(d=>mNoise(t+d,.05,.09,900,3500));}
+    if(sb===15&&bi%2===1&&!roll)mNoise(t,.06,.06,1500,8000);
+    // HI-HAT on every 16th; open hat on the off-beats
+    const hatSkip=(bi===2&&sb%2===1)||(bi===6&&sb>=8&&sb<12);
+    if(!hatSkip){if(sb%4===2)mNoise(t,.13,.068,6000,15000);
+      else mNoise(t,.03,sb%2===0?.04:.024,7500,15000);}
+    // CHANGE-UPS through the 8-bar loop (each bar plays a little differently; every second pass adds more)
+    if(bi===1&&sb===14){mNoise(t,.07,.14,1300,9000);mNoise(t+.03,.07,.1,1300,9000);}          // snare flam into bar 3
+    if((bi===2||bi===6)&&(sb===3||sb===6||sb===11)){mTone(t,1150,900,.035,.12,"triangle");mNoise(t,.015,.07,2000,8000);} // rim clicks
+    if(bi===5&&(sb===7||sb===9||sb===13))mNoise(t,.06,.1,1400,8000);                          // funky ghost snares
+    if(bi===5&&sb===9){mTone(t,66,36,.12,.28,"sine");}                                          // double kick
+    if(bi===6&&sb>=8&&sb<12&&sb!==9){mTone(t,sb===8?340:270,sb===8?290:230,.13,.26,"sine");mNoise(t,.02,.05,800,3000);} // conga break
+    if(bi===4&&(sb===6||sb===14)){mTone(t,880,860,.09,.07,"square");}                           // cowbell
+    if(pass===1&&bi===0&&sb>=14){mNoise(t,.08,.14,1300,9000);}                                  // second pass: snare pickup
+    if(pass===1&&bi===2&&sb%4===1)mNoise(t,.035,.05,5000,12000);                                // second pass: shaker
+    // CRASH at the top of each 4-bar phrase
+    if(sb===0&&bi%4===0)mNoise(t,1.4,.1,4500,15000);
+    // FILLS: toms tumbling down on the last beat of bars 4 and 8; snare roll under them on bar 8
+    if(fill&&sb>=12){const tf=[220,180,140,105][sb-12];mTone(t,tf*1.15,tf*.8,.2,.34,"sine");mNoise(t,.04,.08,200,2500);}
+    if(roll){mNoise(t,.09,.1+.025*(sb-12),1300,9000);}
+    if(sb===0)mReese(t,bar.root-12,bi);
+    const sl=(Math.floor(step/16)%8===7?MUS.slapB:MUS.slapA)[sb];if(sl!==".")mSlap(t,bar.root-12,sl,s16);
+    // fast 16th arpeggio (chip-style), quieter on weak steps
+    const n=bar.ch[[0,1,2,1][sb%4]]+12+(sb>=8&&sb%4===3?12:0);
+    mTone(t,mf(n),mf(n),s16*1.8,sb%4===0?.022:.014,"square");
+    // lead melody on 8th-note slots
+    if(sb%2===0){const m=bar.mel[sb/2];if(m)mLead(t,m,s16*3.4,.019);}
+  }
+  function mTick(){if(!ctx||!musRun)return;const beat=60/MUS.bpm,sd=beat/4;
+    while(musNext<ctx.currentTime+.35){mSchedule(musStep,musNext);musNext+=sd;musStep++;}}
+  function musicStart(){
+    if(musRun&&!musStopT)return;
+    if(!ctx||ctx.state!=="running"||!master)return;
+    if(musStopT){clearTimeout(musStopT);musStopT=null;}
+    if(!musRun){
+      musBus=ctx.createGain();musBus.gain.value=0;musBus.connect(master);
+      musDelay=ctx.createDelay(1);musDelay.delayTime.value=60/MUS.bpm*.75;
+      if(!musNoise){const n=Math.floor(ctx.sampleRate*.5);musNoise=ctx.createBuffer(1,n,ctx.sampleRate);const d=musNoise.getChannelData(0);for(let i=0;i<n;i++)d[i]=Math.random()*2-1;}
+      const fb=ctx.createGain();fb.gain.value=.3;const wet=ctx.createGain();wet.gain.value=.35;
+      musDelay.connect(fb);fb.connect(musDelay);musDelay.connect(wet);wet.connect(musBus);
+      musNext=ctx.currentTime+.15;musStep=0;musRun=true;
+      musTimer=setInterval(mTick,80);mTick();}
+    musBus.gain.cancelScheduledValues(ctx.currentTime);musBus.gain.setValueAtTime(musBus.gain.value,ctx.currentTime);
+    musBus.gain.linearRampToValueAtTime(.7,ctx.currentTime+1.2);}
+  function musicStop(){
+    if(!musRun||musStopT)return;
+    try{musBus.gain.cancelScheduledValues(ctx.currentTime);musBus.gain.setValueAtTime(musBus.gain.value,ctx.currentTime);
+      musBus.gain.linearRampToValueAtTime(0,ctx.currentTime+.5);}catch(e){}
+    musStopT=setTimeout(()=>{clearInterval(musTimer);musTimer=null;musRun=false;musStopT=null;
+      try{musBus.disconnect();}catch(e){}musBus=null;musDelay=null;},650);}
+  return{
+    unlock(){ensure();},
+    musicStart,musicStop,
+    isMuted(){return muted;},
+    setMuted(m){muted=!!m;try{localStorage.setItem('nanite_vigilante_mute',muted?'1':'0');}catch(e){}
+      if(outGain&&ctx){try{outGain.gain.cancelScheduledValues(ctx.currentTime);outGain.gain.setTargetAtTime(muted?0:1,ctx.currentTime,.015);}catch(e){outGain.gain.value=muted?0:1;}}},
+    status(){if(!(window.AudioContext||window.webkitAudioContext))return"unavailable";
+      if(!ctx||ctx.state!=="running")return"blocked";return"ready";},
+    playerShoot(x){ensure();if(!ctx)return; // deep, liquid "bloop" - pitch and a closing lowpass filter both drop together, like a droplet through the bloodstream, instead of a dry arcade blip
+      const t=ctx.currentTime;
+      const o=ctx.createOscillator();o.type="sine";
+      // Lifted out of the heartbeat's 40-80 Hz band: a short, soft, resonant "wet pop"
+      // (~210 -> 95 Hz, lowpass sweeping down with it) so the two sounds don't mask each other.
+      o.frequency.setValueAtTime(210,t);o.frequency.exponentialRampToValueAtTime(95,t+.09);
+      const f=ctx.createBiquadFilter();f.type="lowpass";f.Q.value=5;
+      f.frequency.setValueAtTime(900,t);f.frequency.exponentialRampToValueAtTime(260,t+.1);
+      const g=ctx.createGain();g.gain.setValueAtTime(.24,t);g.gain.exponentialRampToValueAtTime(.001,t+.11);
+      o.connect(f);f.connect(g);out(g,x);o.start(t);o.stop(t+.12);
+      noise(.01,.02,.4,x);},
+    // Sounds below take the source's screen x so they pan across the stereo field.
+    gunnerShoot(x){tone(520,340,.10,.22,"sine",x);},
+    mineDrop(boss,x){tone(boss?130:180,boss?60:80,boss?.22:.16,.28,"sine",x);noise(.06,.12,0,x);},
+    missileLaunch(x){tone(220,90,.28,.22,"sawtooth",x);noise(.28,.14,.3,x);},
+    explSmall(x){noise(.22,.35,.15,x);},
+    explMissile(x){noise(.38,.5,.35,x);},
+    explMine(x){noise(.28,.4,.25,x);},
+    explPlayer(x){noise(.55,.45,.4,x);tone(500,90,.4,.2,"square",x);},
+    tongueWind(x){tone(260,380,.5,.1,"sine",x);}, // a rising gurgle as it takes aim
+    tongueShoot(x){tone(560,170,.16,.22,"sawtooth",x);noise(.1,.12,0,x);}, // fast wet whip
+    tongueStick(x){tone(130,60,.3,.32,"square",x);noise(.12,.16,.3,x);}, // squelchy thud when it grabs you
+    tardiPing(x){tone(950,640,.08,.12,"triangle",x);}, // shot or ship bouncing off its armour
+    tentacleLaunch(x){tone(170,70,.3,.16,"sine",x);noise(.12,.07,.4,x);}, // wet, low "schlorp" as a tentacle shoots out
+    tentacleHit(x){tone(340,110,.13,.22,"triangle",x);noise(.06,.12,0,x);}, // sharp pop as a shot yanks it back
+    explBoss(x){noise(.9,.6,.5,x);},
+    explBossFinal(x){noise(1.1,.75,.55,x);tone(140,40,.6,.3,"sawtooth",x);},
+    laserWarnBeep(){tone(750,750,.1,.26,"square");},
+    highScoreFanfare(){ // quick ascending arpeggio - a little "congratulations" riff
+      const notes=[523.25,659.25,783.99,1046.5];
+      notes.forEach((f,i)=>setTimeout(()=>tone(f,f,.24,.24,"square"),i*110));
+    },
+    bugle(){ // 7-note cavalry "charge": da-da-da-DAA, da-DA-DAAAH. Square + sawtooth for a brassy tone.
+      const seq=[[392,.11,0],[523.25,.11,120],[659.25,.11,240],[783.99,.22,360],[659.25,.11,610],[783.99,.14,730],[783.99,.55,900]];
+      seq.forEach(([f,d,t])=>setTimeout(()=>{tone(f,f*1.004,d+.08,.16,"square");tone(f*2,f*2,d+.05,.05,"sawtooth");},t));
+    },
+    bonusCharge(){ // fast rising "charge up" sting for the bonus round intro - distinct
+      // from the held-note high-score fanfare: short, sawtooth, quickening notes.
+      const notes=[180,220,280,360,470,620];
+      notes.forEach((f,i)=>setTimeout(()=>tone(f,f*1.2,.08,.24,"sawtooth"),i*65));
+    },
+    stallAlarm(){ // two quick rising alarm beeps - the parasites just stopped fleeing and started hunting
+      tone(300,900,.16,.28,"square");setTimeout(()=>tone(300,900,.16,.28,"square"),210);
+    },
+    heartbeat(kind,stress){ // always-on low "lub" (kind 1) / "dub" (kind 2) thump, kept centered; stress 0..1 makes it louder as lives run low.
+      // Each thump carries a faint 2x overtone (triangle) so it still reads on small speakers/phones that can't reproduce 40-80 Hz.
+      const v=1+.5*(stress||0);
+      if(kind===1){tone(62,34,.14,.35*v,"sine");tone(124,68,.10,.10*v,"triangle");}
+      else{tone(80,44,.11,.23*v,"sine");tone(160,88,.08,.07*v,"triangle");}},
+    flatline(){ensure();if(!ctx)return; // steady monitor tone that holds, then fades
+      const t=ctx.currentTime,o=ctx.createOscillator(),g=ctx.createGain();
+      o.type="sine";o.frequency.setValueAtTime(880,t);
+      g.gain.setValueAtTime(.15,t);g.gain.setValueAtTime(.15,t+1.6);g.gain.exponentialRampToValueAtTime(.001,t+1.9);
+      o.connect(g);g.connect(master);o.start(t);o.stop(t+1.95);},
+    laserLoopStart(){ensure();if(!ctx||laserOsc)return; // "viral genome strand" tone: a low, filtered, wobbling tone - bassy/liquidy rather than a sharp laser zap
+      const t=ctx.currentTime;
+      laserGain=ctx.createGain();
+      laserGain.gain.setValueAtTime(0,t);
+      laserGain.gain.linearRampToValueAtTime(.26,t+.04);
+      laserFilter=ctx.createBiquadFilter();laserFilter.type="lowpass";
+      laserFilter.frequency.value=300;laserFilter.Q.value=4.5;
+      laserOsc=ctx.createOscillator();laserOsc.type="sine";laserOsc.frequency.value=68;
+      laserOsc2=ctx.createOscillator();laserOsc2.type="triangle";laserOsc2.frequency.value=70.5; // slight detune against osc1 for a thick, wet beating tone
+      laserLfo=ctx.createOscillator();laserLfo.type="sine";laserLfo.frequency.value=5.5; // slow wobble - the "liquid" gurgle
+      const lfoGain=ctx.createGain();lfoGain.gain.value=150; // modulates the filter cutoff
+      laserLfo.connect(lfoGain);lfoGain.connect(laserFilter.frequency);
+      laserOsc.connect(laserFilter);laserOsc2.connect(laserFilter);
+      laserFilter.connect(laserGain);laserGain.connect(master);
+      laserOsc.start();laserOsc2.start();laserLfo.start();},
+    laserLoopStop(){
+      if(laserOsc){
+        const o=laserOsc,o2=laserOsc2,lfo=laserLfo,g=laserGain,t=ctx.currentTime;
+        try{
+          g.gain.cancelScheduledValues(t);
+          g.gain.setValueAtTime(Math.max(g.gain.value,.0001),t);
+          g.gain.exponentialRampToValueAtTime(.0001,t+.18);
+          o.stop(t+.2);o2.stop(t+.2);lfo.stop(t+.2);
+        }catch(e){try{o.stop();o2.stop();lfo.stop();}catch(e2){}}
+        laserOsc=null;laserOsc2=null;laserLfo=null;laserFilter=null;laserGain=null;
+      }
+    },
+    thrustStart(){ensure();if(!ctx||thrustOsc)return;
+      const t=ctx.currentTime;
+      thrustGain=ctx.createGain();thrustGain.gain.setValueAtTime(0,t);
+      thrustGain.gain.linearRampToValueAtTime(.17,t+.05);
+      thrustOsc=ctx.createOscillator();thrustOsc.type="triangle";thrustOsc.frequency.value=72;
+      thrustLfo=ctx.createOscillator();thrustLfo.type="sine";thrustLfo.frequency.value=7;
+      const lfoGain=ctx.createGain();lfoGain.gain.value=9;
+      thrustLfo.connect(lfoGain);lfoGain.connect(thrustOsc.frequency);
+      const n=Math.floor(ctx.sampleRate*.5),buf=ctx.createBuffer(1,n,ctx.sampleRate),d=buf.getChannelData(0);
+      for(let i=0;i<n;i++)d[i]=Math.random()*2-1;
+      thrustNoise=ctx.createBufferSource();thrustNoise.buffer=buf;thrustNoise.loop=true;
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=420;
+      const noiseGain=ctx.createGain();noiseGain.gain.value=.45;
+      thrustNoise.connect(lp);lp.connect(noiseGain);noiseGain.connect(thrustGain);
+      thrustOsc.connect(thrustGain);thrustGain.connect(master);
+      thrustOsc.start();thrustNoise.start();thrustLfo.start();},
+    thrustStop(){
+      if(thrustOsc){
+        const t=ctx.currentTime;
+        try{
+          thrustGain.gain.cancelScheduledValues(t);
+          thrustGain.gain.setValueAtTime(Math.max(thrustGain.gain.value,.0001),t);
+          thrustGain.gain.exponentialRampToValueAtTime(.0001,t+.12);
+          thrustOsc.stop(t+.14);thrustNoise.stop(t+.14);thrustLfo.stop(t+.14);
+        }catch(e){try{thrustOsc.stop();thrustNoise.stop();thrustLfo.stop();}catch(e2){}}
+        thrustOsc=null;thrustNoise=null;thrustGain=null;thrustLfo=null;
+      }
+    }
+  };
+})();
+
+// ---------- input ----------
+const Keys={};
+window.addEventListener("keydown",e=>{Keys[e.code]=true;Snd.unlock();if(e.code==="KeyM"&&!e.repeat)toggleMute();});
+window.addEventListener("keyup",e=>{Keys[e.code]=false;});
+
+function K(){return parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--k"))||1;} // current control scale (set in relayout)
+const Touch={active:false,rot:0,thrust:false,fire:false,missile:false,pauseReq:false};
+(function setupTouch(){
+  const stick=document.getElementById("stick"),knob=document.getElementById("knob");
+  let stickId=null,center=null;
+  function isTouchDevice(){return matchMedia("(pointer:coarse)").matches||navigator.maxTouchPoints>0;}
+  if(isTouchDevice()){document.body.classList.add("touchmode");Touch.active=true;}
+  function stickStart(e){const t=e.changedTouches?e.changedTouches[0]:e;
+    stickId=e.changedTouches?e.changedTouches[0].identifier:"mouse";
+    const r=stick.getBoundingClientRect();center=V(r.left+r.width/2,r.top+r.height/2);
+    stickMove(e);}
+  function stickMove(e){if(center===null)return;const t=e.changedTouches?
+      [...e.changedTouches].find(tt=>tt.identifier===stickId):e;
+    if(!t)return;
+    let dx=t.clientX-center.x,dy=t.clientY-center.y;const m=54*K();
+    const l=Math.hypot(dx,dy);if(l>m){dx=dx/l*m;dy=dy/l*m;}
+    knob.style.left=(37*K()+dx)+"px";knob.style.top=(37*K()+dy)+"px";
+    Touch.rot=clamp(dx/m,-1,1);} // stick steers only, same as the gamepad analog stick - thrust is the dedicated THRUST button
+  function stickEnd(){stickId=null;center=null;Touch.rot=0;
+    knob.style.left=(37*K())+"px";knob.style.top=(37*K())+"px";}
+  stick.addEventListener("touchstart",e=>{stickStart(e);e.preventDefault();},{passive:false});
+  stick.addEventListener("touchmove",e=>{stickMove(e);e.preventDefault();},{passive:false});
+  stick.addEventListener("touchend",e=>{stickEnd();e.preventDefault();},{passive:false});
+  function bindBtn(id,prop){const el=document.getElementById(id);
+    const on=e=>{Touch[prop]=true;el.classList.add("active");Snd.unlock();e.preventDefault();};
+    const off=e=>{Touch[prop]=false;el.classList.remove("active");e.preventDefault();};
+    el.addEventListener("touchstart",on,{passive:false});
+    el.addEventListener("touchend",off,{passive:false});
+    el.addEventListener("touchcancel",off,{passive:false});}
+  bindBtn("btnThrust","thrust");bindBtn("btnFire","fire");bindBtn("btnMissile","missile");
+  // Pause pill: a tap just raises a request flag that update() consumes (same path as P/Esc).
+  const pb=document.getElementById("btnPause");
+  const ask=e=>{Touch.pauseReq=true;Snd.unlock();e.preventDefault();};
+  pb.addEventListener("touchstart",ask,{passive:false});
+  pb.addEventListener("click",ask);
+})();
+
+// Left/right-handed touch layout. The choice is remembered on the device (localStorage, wrapped
+// because it can be blocked) and can be flipped back any time with the pill button, which is only
+// visible on the title and game-over screens so a thumb can't hit it mid-game. It only mirrors the
+// layout via the body.lefty class (see CSS); input handling is identical either way.
+const Hand=(()=>{
+  const KEY="nanite_vigilante_hand",btn=document.getElementById("btnHand");
+  let lefty=false;
+  try{lefty=localStorage.getItem(KEY)==="left";}catch(e){}
+  function apply(){
+    document.body.classList[lefty?"add":"remove"]("lefty");
+    btn.textContent=`CONTROLS: ${lefty?"LEFT":"RIGHT"}-HANDED  -  TAP TO SWITCH`;
+  }
+  btn.addEventListener("click",e=>{
+    lefty=!lefty;
+    try{localStorage.setItem(KEY,lefty?"left":"right");}catch(err){}
+    apply();Snd.unlock();e.preventDefault();
+  });
+  apply();
+  return{isLefty:()=>lefty,
+    setVisible(v){document.body.classList[v?"add":"remove"]("showhand");}};
+})();
+
+function pollInput(){
+  const s={thrust:false,rotate:0,fire:false,firePressed:false,missile:false,
+    missilePressed:false,pausePressed:false,startPressed:false};
+  if(Keys.ArrowUp||Keys.KeyW)s.thrust=true;
+  if(Keys.ArrowLeft||Keys.KeyA)s.rotate-=1;
+  if(Keys.ArrowRight||Keys.KeyD)s.rotate+=1;
+  let fireDown=!!Keys.Space,msDown=!!(Keys.ShiftLeft||Keys.ShiftRight),
+    pauseDown=!!(Keys.KeyP||Keys.Escape),startDown=!!Keys.Enter;
+
+  const pads=navigator.getGamepads?navigator.getGamepads():[];
+  const gp=pads&&pads[0];
+  if(gp){
+    if(!document.body.classList.contains("padmode")&&(Math.abs(gp.axes[0]||0)>.5||gp.buttons.some(b=>b&&b.pressed)))document.body.classList.add("padmode");
+    const ax=gp.axes[0]||0;if(Math.abs(ax)>.25)s.rotate+=clamp(ax,-1,1);
+    if(gp.buttons[0]&&gp.buttons[0].pressed)fireDown=true;
+    if(gp.buttons[1]&&gp.buttons[1].pressed)msDown=true;
+    if((gp.buttons[4]&&gp.buttons[4].pressed)||(gp.buttons[5]&&gp.buttons[5].pressed))s.thrust=true;
+    if(gp.buttons[6]&&gp.buttons[6].value>.5)s.thrust=true;
+    if(gp.buttons[7]&&gp.buttons[7].value>.5)s.thrust=true;
+    if(gp.buttons[9]&&gp.buttons[9].pressed)startDown=true;
+    if(gp.buttons[8]&&gp.buttons[8].pressed)pauseDown=true;
+  }
+  if(Touch.active){
+    s.rotate+=Touch.rot;
+    if(Touch.thrust)s.thrust=true;if(Touch.fire)fireDown=true;if(Touch.missile)msDown=true;
+  }
+  s.rotate=clamp(s.rotate,-1,1);
+  s.fire=fireDown;s.missile=msDown;
+  s.firePressed=fireDown&&!pollInput._pf;s.missilePressed=msDown&&!pollInput._pm;
+  s.pausePressed=pauseDown&&!pollInput._pp;s.startPressed=startDown&&!pollInput._ps;
+  pollInput._pf=fireDown;pollInput._pm=msDown;pollInput._pp=pauseDown;pollInput._ps=startDown;
+  // Edge-detected left/right, used for menu-style discrete steppers (e.g. the
+  // high-score initials entry) where a continuous held axis would zip by.
+  const leftDown=s.rotate<-.4,rightDown=s.rotate>.4;
+  s.leftPressed=leftDown&&!pollInput._pl;s.rightPressed=rightDown&&!pollInput._pr;
+  pollInput._pl=leftDown;pollInput._pr=rightDown;
+  return s;
+}
+
+// ---------- entities ----------
+function newPlayer(pos){return{pos:V(pos.x,pos.y),vel:V(0,0),angle:-90,alive:true,
+  invuln:CFG.invulnT,cd:0,msLeft:CFG.msCount,activeMs:null,thrusting:false,r:CFG.playerR};}
+function respawnPlayer(p,pos){p.pos=V(pos.x,pos.y);p.vel=V(0,0);p.angle=-90;p.alive=true;
+  p.invuln=CFG.invulnT;p.activeMs=null;p.msLeft=CFG.msCount;} // missiles replenish on every life, not just every level - a boss fight spanning multiple deaths isn't starved of them
+
+function newBullet(pos,vel,owner){return{pos,vel,life:CFG.bulLife,r:CFG.bulR,owner,alive:true};}
+function newMissile(pos,vel,angle){return{pos,vel,angle,life:CFG.msLife,r:CFG.msR,
+  alive:true,arm:CFG.msArm,exploded:false};}
+function newMine(pos,source){return{pos:V(pos.x,pos.y),vel:V((Math.random()*2-1)*8,(Math.random()*2-1)*8),
+  r:CFG.mineR,hp:1,alive:true,arm:CFG.mineArm,life:CFG.mineLife,pulse:Math.random()*6.28,source};}
+function newExplosion(pos,maxR,life=.45){return{pos:V(pos.x,pos.y),maxR,life,maxLife:life,alive:true};}
+function newDebrisField(pos,count){
+  const arr=[];
+  for(let i=0;i<count;i++){
+    const ang=Math.random()*360,spd=90+Math.random()*260,life=.6+Math.random()*.9;
+    arr.push({pos:V(pos.x,pos.y),vel:mul(fwd(ang),spd),angle:Math.random()*360,
+      spin:(Math.random()*2-1)*360,len:6+Math.random()*12,life,maxLife:life,
+      color:Math.random()<0.5?COL.boss:COL.flame,alive:true});
+  }
+  return arr;
+}
+
+function newEnemy(kind,pos){
+  const base={kind,pos:V(pos.x,pos.y),vel:V(0,0),angle:Math.random()*360,alive:true,
+    animSeed:Math.random()*1000};
+  if(kind==="kami")return Object.assign(base,{hp:1,r:CFG.kmR});
+  if(kind==="gun")return Object.assign(base,{hp:CFG.gnHp,r:CFG.gnR,fireTimer:.4+Math.random()*CFG.gnCd,pendingBullet:null});
+  return Object.assign(base,{hp:CFG.mlHp,r:CFG.mlR,dropTimer:.8+Math.random()*CFG.mlCd,
+    wanderTimer:0,wanderTarget:Math.random()*360,pendingMine:null});
+}
+// Boss rotation: a fixed 3-boss cycle by tier (tier = zone / 4): Virus, Amoeba, Tardigrade, then round again.
+const BOSS_ORDER=["virus","amoeba","tardigrade"],BOSS_NAMES={virus:"VIRUS",amoeba:"AMOEBA",tardigrade:"TARDIGRADE"};
+function bossKindFor(tier){return BOSS_ORDER[(tier-1)%BOSS_ORDER.length];}
+function newBoss(tier){
+  const kind=bossKindFor(tier),hpTier=Math.min(tier,CFG.bossHpCapTier),hp=CFG.bossHp0+CFG.bossHpTier*(hpTier-1);
+  const b={pos:V(CFG.W/2,140),vel:V(0,0),angle:90,hp,maxHp:hp,tier,kind,r:CFG.bossR,alive:true,
+  wanderTimer:0,wanderTarget:V(CFG.W/2,140),
+  laserState:"idle",laserTimer:1.5+Math.random()*1.5,laserDir:V(0,1),laserTick:0,
+  mineTimer:1+Math.random()*CFG.bossMineCd,pendingMine:null,laserHitPlayer:false};
+  if(kind==="amoeba"){
+    // n = how many times this boss has appeared (tier 2 -> 1, tier 5 -> 2, ...). Each appearance: more tentacles (3, 4, then 5), faster tentacles, faster body.
+    const n=Math.floor((tier-2)/3)+1;
+    b.n=n;b.r=CFG.amoebaR;b.spdF=Math.min(1+.1*(n-1),1.8);b.tentF=Math.min(1+.16*(n-1),2.2);b.wanderTimer=.6;
+    b.minActive=Math.min(5,2+n); // tentacles kept reaching at once: 3, then 4, then 5. The boss always has 5 slots, so a retracting one never leaves it short
+    b.tents=Array.from({length:5},(_,i)=>({state:"idle",timer:.4+i*.6,len:0,max:0,ang:90,fast:false,seed:Math.random()*6.28}));
+  }
+  if(kind==="tardigrade"){
+    // n = how many times it has appeared (tier 3 -> 1, tier 6 -> 2, ...). Each appearance: a quicker tongue and body, a shorter reel-in, and a firmer grip to break.
+    const n=Math.floor((tier-3)/3)+1;
+    b.n=n;b.r=CFG.tardiR;b.spdF=Math.min(1+.08*(n-1),1.6);b.tf=Math.min(1+.12*(n-1),2);
+    b.grip=Math.min(CFG.tardiGripMax,CFG.tardiGrip0+Math.floor((n-1)/2));b.reel=Math.max(CFG.tardiReelMin,CFG.tardiReel*Math.pow(.9,n-1));
+    b.walk=0;b.wanderTimer=.8;b.bumpCd=0;b.tongue={state:"idle",timer:1.6,len:0,dir:V(1,0),hits:0,fast:false,pull:0};
+  }
+  return b;}
+
+// ---------- high scores ----------
+// Persisted via localStorage so scores survive between play sessions on the
+// same browser/device. localStorage can be unavailable (private browsing,
+// or when this page runs inside a sandboxed preview) so every read/write is
+// wrapped in try/catch and falls back to an in-memory list for that session.
+const HISCORE_KEY="nanite_vigilante_highscores",HISCORE_MAX=8;
+const DEFAULT_HISCORES=[["ACE",5000],["VGT",4200],["NAN",3600],["BIO",3000],
+  ["RNA",2400],["LAB",1800],["CPU",1200],["XEN",600]].map(([initials,score])=>({initials,score}));
+function loadHighScores(){
+  try{const raw=localStorage.getItem(HISCORE_KEY);if(raw&&raw.length<20000){const list=JSON.parse(raw);
+    if(Array.isArray(list)){const clean=sanitizeScores(list);if(clean.length)return clean;}}}catch(e){}
+  return DEFAULT_HISCORES.slice();
+}
+// Saved scores live in the player's own browser storage and could be edited or corrupted, so never trust them:
+// keep only entries with 1-3 letter/digit initials and a sane whole-number score, sorted and capped at HISCORE_MAX.
+function cleanInitials(v){return typeof v==="string"?v.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,3):"";}
+function sanitizeScores(list){
+  return list.filter(e=>e&&typeof e==="object").map(e=>({initials:cleanInitials(e.initials)||"???",score:Number(e.score)}))
+    .filter(e=>Number.isFinite(e.score)&&e.score>=0&&e.score<=999999999).map(e=>({initials:e.initials,score:Math.floor(e.score)}))
+    .sort((a,b)=>b.score-a.score).slice(0,HISCORE_MAX);
+}
+function saveHighScores(list){try{localStorage.setItem(HISCORE_KEY,JSON.stringify(list));}catch(e){}}
+let HiScores=loadHighScores();
+function qualifiesForHighScore(score){
+  return score>0&&(HiScores.length<HISCORE_MAX||score>HiScores[HiScores.length-1].score);
+}
+function addHighScore(initials,score){
+  const entry={initials:cleanInitials(initials)||"???",score};
+  HiScores.push(entry);
+  HiScores.sort((a,b)=>b.score-a.score);
+  HiScores=HiScores.slice(0,HISCORE_MAX);
+  saveHighScores(HiScores);
+  return HiScores.indexOf(entry); // -1 if it narrowly missed the cut after the sort
+}
+
+// ---------- game state ----------
+let G=null;
+function isBossLevel(l){return l%CFG.cycle===0;}
+function diffIndex(l){return Math.max(1,l-Math.floor(l/CFG.cycle));}
+function safeSpawn(minD=220){for(let i=0;i<20;i++){const p=rndEdge();if(dist(p,G.player.pos)>=minD)return p;}return rndEdge();}
+
+function resetGame(){
+  Snd.laserLoopStop();Snd.thrustStop();
+  G={state:"menu",frame:0,player:newPlayer(V(CFG.W/2,CFG.H/2)),lives:3,score:0,level:1,
+    respawnTimer:0,levelClearTimer:0,bullets:[],missiles:[],mines:[],enemies:[],boss:null,
+    explosions:[],debris:[],speedMult:1,prevLaserState:null,stars:makeStars(140),cells:makeCells(9),
+    extraLifeFlash:0,hitstopTimer:0,shakeMag:0,menuAnimTime:0,
+    menuTimer:0,menuShowScores:false,
+    pendingScore:0,initials:["A","A","A"],initialsIdx:0,hsIntroTimer:0,newHighScoreIdx:-1,
+    gameOverAnimTime:0,
+    bossDeathPending:false,bossDeathTimer:0,bossDeathPos:null,bossDeathRadius:0,
+    bonus:null,pendingBonusTier:0,heart:newHeart(),
+    stallTimer:0,stallActive:false,stallFlash:0,stallMsg:"",bossIdle:0,bossRage:0};
+  G.player.alive=false;
+}
+function makeStars(n){const a=[];for(let i=0;i<n;i++)a.push({x:Math.random()*CFG.W,y:Math.random()*CFG.H,s:.3+Math.random()*.9});return a;}
+// Faint drifting "red blood cell" discs for ambience - large, very low alpha,
+// slow-moving. Purely decorative background behind the stars/gameplay.
+function makeCells(n){const a=[];for(let i=0;i<n;i++)a.push({x:Math.random()*CFG.W,y:Math.random()*CFG.H,
+  r:16+Math.random()*24,vx:(Math.random()*2-1)*7,vy:(Math.random()*2-1)*7,
+  rot:Math.random()*Math.PI,a:.035+Math.random()*.05});return a;}
+// ---------- heartbeat / ECG ----------
+// The pulse is the player's remaining lives: calm at full health, racing on the
+// last life, flat once they're gone. One clock (h.tb, seconds since the last
+// beat began) drives both the lub-dub sounds and the EKG waveform so they stay in
+// sync; it's stepped in fixed CFG.heartStep slices so the narrow R spike is never
+// skipped between frames.
+function newHeart(){return{tb:0,bpm:62,f1:false,f2:false,acc:0,flat:false,beats:0,
+  samples:new Array(CFG.heartSamples).fill(0)};}
+function heartBpmFor(lives){return lives>=3?62:lives===2?78:lives===1?100:128;}
+function ecgWave(tb){ // P, Q, R, S, T as gaussians in absolute seconds after beat start
+  const g=(mu,sg)=>{const x=(tb-mu)/sg;return Math.exp(-x*x/2);};
+  return .14*g(.04,.022)-.14*g(.115,.009)+g(.135,.011)-.26*g(.158,.010)+.30*g(.30,.05);
+}
+function updateHeart(dt){
+  const h=G.heart;
+  h.flat=G.lives<0;
+  h.bpm+=(heartBpmFor(G.lives)-h.bpm)*Math.min(1,dt*1.2);
+  const stress=clamp((3-G.lives)/3,0,1);
+  h.acc+=dt;
+  while(h.acc>=CFG.heartStep){
+    h.acc-=CFG.heartStep;
+    if(!h.flat){
+      h.tb+=CFG.heartStep;
+      if(h.tb>=60/h.bpm){h.tb-=60/h.bpm;h.f1=h.f2=false;}
+      if(!h.f1&&h.tb>=.135){h.f1=true;h.beats++;Snd.heartbeat(1,stress);}
+      if(!h.f2&&h.tb>=.30){h.f2=true;Snd.heartbeat(2,stress);}
+    }
+    h.samples.shift();h.samples.push(h.flat?0:ecgWave(h.tb));
+  }
+}
+function updateBackground(dt){
+  for(const c of G.cells){c.x+=c.vx*dt;c.y+=c.vy*dt;
+    if(c.x<-50)c.x=CFG.W+50;else if(c.x>CFG.W+50)c.x=-50;
+    if(c.y<-50)c.y=CFG.H+50;else if(c.y>CFG.H+50)c.y=-50;}
+}
+
+function startLevel(level){
+  G.level=level;G.bullets=[];G.missiles=[];G.mines=[];G.enemies=[];G.boss=null;
+  G.stallTimer=0;G.stallActive=false;G.bossIdle=0;G.bossRage=0;
+  Snd.laserLoopStop();Snd.thrustStop();G.prevLaserState=null;
+  const keepMs=G.player.msLeft;
+  respawnPlayer(G.player,V(CFG.W/2,CFG.H/2));
+  G.player.msLeft=keepMs; // missiles only refill on losing a life (respawnPlayer), not on every new level
+  if(isBossLevel(level)){
+    const tier=Math.floor(level/CFG.cycle);
+    G.boss=newBoss(tier);G.speedMult=Math.min(1+.05*(tier-1),CFG.bossSpeedMultCap);
+  }else{
+    const d=diffIndex(level);
+    G.speedMult=Math.min(1+.07*(d-1),2.4);
+    const kn=Math.min(1+Math.floor(d/2),20),
+      gn=Math.min(1+Math.floor((d-1)/3),12),
+      mn=Math.min(1+Math.floor((d-1)/4),7);
+    for(let i=0;i<kn;i++)G.enemies.push(newEnemy("kami",safeSpawn()));
+    for(let i=0;i<gn;i++)G.enemies.push(newEnemy("gun",safeSpawn()));
+    for(let i=0;i<mn;i++)G.enemies.push(newEnemy("mine",safeSpawn()));
+  }
+  G.state="playing";
+}
+
+// ---------- update ----------
+// Player ship movement/firing, factored out of updatePlaying so the bonus
+// round (which has its own update loop, no enemies/mines/boss) can drive the
+// same ship physics and shot behavior without duplicating/drifting from it.
+function updatePlayerShip(dt,inp){
+  const p=G.player;
+  p.invuln=Math.max(0,p.invuln-dt);
+  if(inp.rotate)p.angle+=inp.rotate*CFG.rotSpd*dt;
+  const wasThrusting=p.thrusting;
+  p.thrusting=!!inp.thrust;
+  if(p.thrusting&&!wasThrusting)Snd.thrustStart();
+  else if(!p.thrusting&&wasThrusting)Snd.thrustStop();
+  if(p.thrusting){const f=fwd(p.angle);p.vel=add(p.vel,mul(f,CFG.thrustAcc*dt));
+    if(len(p.vel)>CFG.maxSpd)p.vel=mul(norm(p.vel),CFG.maxSpd);}
+  else{const damp=Math.max(0,1-CFG.fric*dt);p.vel=mul(p.vel,damp);
+    if(len(p.vel)<2)p.vel=V(0,0);}
+  const stuck=G.boss&&G.boss.kind==="tardigrade"&&G.boss.tongue.state==="stuck";
+  if(stuck&&len(p.vel)>70)p.vel=mul(norm(p.vel),70); // stuck on the tongue: thrust only slows the reel-in, it can't beat it
+  p.pos=wrap(add(p.pos,mul(p.vel,dt)));
+  if(p.cd>0)p.cd-=dt;
+
+  if(inp.fire&&p.cd<=0){p.cd=CFG.bulCd;const f=fwd(p.angle);
+    const bpos=add(p.pos,mul(f,p.r+4)),bvel=add(mul(f,CFG.bulSpd),mul(p.vel,.3));
+    G.bullets.push(newBullet(bpos,bvel,"player"));Snd.playerShoot(p.pos.x);}
+  if(inp.missilePressed){
+    if(p.activeMs&&p.activeMs.alive){
+      if(p.activeMs.arm<=0)explodeMissile(p.activeMs);
+    }else if(p.msLeft>0&&!stuck){ // bullets only while stuck: a missile on the tongue would blow up in your face
+      p.msLeft--;const f=fwd(p.angle);
+      const mpos=add(p.pos,mul(f,p.r+6)),mvel=add(mul(f,CFG.msSpd),mul(p.vel,.4));
+      const m=newMissile(mpos,mvel,p.angle);p.activeMs=m;G.missiles.push(m);Snd.missileLaunch(p.pos.x);
+    }
+  }
+}
+function updatePlaying(dt,inp){
+  const p=G.player;
+  if(p.alive){
+    updatePlayerShip(dt,inp);
+  }else{
+    G.respawnTimer-=dt;
+    if(G.respawnTimer<=0&&G.lives>=0)respawnPlayer(p,V(CFG.W/2,CFG.H/2));
+  }
+
+  for(const b of G.bullets){b.pos=wrap(add(b.pos,mul(b.vel,dt)));b.life-=dt;if(b.life<=0)b.alive=false;}
+  for(const m of G.missiles){if(!m.alive)continue;
+    if(m.arm>0)m.arm-=dt;m.pos=wrap(add(m.pos,mul(m.vel,dt)));
+    if(len(m.vel)>1)m.angle=Math.atan2(m.vel.y,m.vel.x)*180/Math.PI;
+    m.life-=dt;if(m.life<=0)m.alive=false;}
+  // Parasite-dropped spore mines gain a gentle homing pull at higher difficulty:
+  // none until diffIndex 5, ramping to full (but still sub-player-speed) strength
+  // by diffIndex 16.
+  const mineTrackT=clamp((diffIndex(G.level)-CFG.mineTrackStartD)/(CFG.mineTrackFullD-CFG.mineTrackStartD),0,1);
+  const mineTrackSpd=CFG.mineTrackMaxSpd*mineTrackT;
+  // Boss-dropped mines pick up the same kind of homing once the boss's own HP/damage
+  // curve has capped out (tier 8) - starting tier 9, ramping to full strength by
+  // tier 13, so the fight keeps getting more dangerous even once its health bar stops.
+  const bossTier=Math.floor(G.level/CFG.cycle);
+  const bossMineTrackT=clamp((bossTier-CFG.bossMineTrackStartTier)/(CFG.bossMineTrackFullTier-CFG.bossMineTrackStartTier),0,1);
+  const bossMineTrackSpd=CFG.bossMineTrackMaxSpd*bossMineTrackT;
+  for(const mn of G.mines){
+    if(mn.arm>0){mn.arm-=dt;}
+    else if(p.alive&&(mn.home>0||(mn.source==="parasite"&&mineTrackSpd>0)||(mn.source==="boss"&&bossMineTrackSpd>0))){
+      // steer velocity gradually toward the player rather than snapping to face
+      // them, so it reads as "drifting toward you" not a locked-on missile.
+      const spd=mn.home>0?mn.home:mn.source==="parasite"?mineTrackSpd:bossMineTrackSpd;
+      const toP=sub(p.pos,mn.pos),dd=len(toP);
+      if(dd>1){
+        const desired=mul(toP,spd/dd);
+        const turnT=1-Math.pow(.0005,dt);
+        mn.vel=add(mn.vel,mul(sub(desired,mn.vel),turnT));
+      }
+    }
+    mn.pos=wrap(add(mn.pos,mul(mn.vel,dt)));
+    mn.pulse+=dt*4;mn.life-=dt;if(mn.life<=0)mn.alive=false;
+  }
+
+  updateStallTimer(dt);
+  for(const e of G.enemies){
+    updateEnemy(e,dt);
+    if(e.pendingBullet){G.bullets.push(e.pendingBullet);e.pendingBullet=null;Snd.gunnerShoot(e.pos.x);}
+    if(e.pendingMine){G.mines.push(e.pendingMine);e.pendingMine=null;Snd.mineDrop(false,e.pos.x);}
+  }
+  if(G.boss){
+    updateBoss(G.boss,dt);
+    if(G.boss.pendingMine){G.mines.push(G.boss.pendingMine);G.boss.pendingMine=null;Snd.mineDrop(true,G.boss.pos.x);}
+    if(G.boss.laserHitPlayer&&G.player.alive&&G.player.invuln<=0)damagePlayer();
+  }
+  updateBossLaserSound();
+
+  handleCollisions();
+  cleanup();
+  checkLevelClear();
+}
+
+// Anti-stall: tracks how long "only parasites left" has been true and flips
+// G.stallActive once it's held for CFG.stallTime straight - see updateEnemy's
+// minelayer branch for what that actually changes (stop fleeing, speed up).
+// Any other enemy kind still alive, or the level actually clearing, resets it.
+function updateStallTimer(dt){
+  const onlyParasites=!G.boss&&G.enemies.length>0&&G.enemies.every(e=>e.kind==="mine");
+  if(onlyParasites){
+    if(!G.player.alive)return; // clock is paused while you're respawning
+    G.stallTimer+=dt;
+    if(!G.stallActive&&G.stallTimer>=CFG.stallTime){
+      G.stallActive=true;G.stallFlash=2.4;G.stallMsg="PARASITES ENRAGED!";Snd.stallAlarm();
+    }
+  }else{G.stallTimer=0;G.stallActive=false;}
+}
+function updateEnemy(e,dt){
+  if(e.kind==="kami"){
+    if(G.player.alive){const d=sub(G.player.pos,e.pos);
+      const tgt=Math.atan2(d.y,d.x)*180/Math.PI,turn=shortAngle(e.angle,tgt);
+      const maxT=CFG.kmTurn*G.speedMult*dt;e.angle+=clamp(turn,-maxT,maxT);}
+    const sp=CFG.kmSpd*G.speedMult;e.vel=mul(fwd(e.angle),sp);e.pos=wrap(add(e.pos,mul(e.vel,dt)));
+  }else if(e.kind==="gun"){
+    e.pendingBullet=null;
+    if(G.player.alive){const d=sub(G.player.pos,e.pos),dst=len(d);
+      const tgt=Math.atan2(d.y,d.x)*180/Math.PI;
+      let desired=tgt;
+      if(dst>CFG.gnRange+40)desired=tgt;else if(dst<CFG.gnRange-40)desired=tgt+180;else desired=tgt+90;
+      const turn=shortAngle(e.angle,desired),maxT=110*G.speedMult*dt;e.angle+=clamp(turn,-maxT,maxT);
+      const sp=CFG.gnSpd*G.speedMult;e.vel=mul(fwd(e.angle),sp);e.pos=wrap(add(e.pos,mul(e.vel,dt)));
+      e.fireTimer-=dt;
+      if(e.fireTimer<=0&&dst<CFG.gnRange+160){
+        e.fireTimer=CFG.gnCd/Math.max(1,G.speedMult*.6);
+        const f=fwd(tgt),bpos=add(e.pos,mul(f,e.r+4));
+        e.pendingBullet=newBullet(bpos,mul(f,CFG.gnBulSpd),"enemy");
+      }
+    }
+  }else{ // minelayer
+    e.pendingMine=null;e.wanderTimer-=dt;
+    if(e.wanderTimer<=0){e.wanderTimer=1+Math.random()*1.5;e.wanderTarget=Math.random()*360;}
+    let desired=e.wanderTarget;
+    if(G.player.alive){const d=sub(G.player.pos,e.pos),dst=len(d);
+      // Normally it flees once you're close, which is what makes "only parasites
+      // left, just farm the mines from a safe distance" possible. Once the stall
+      // timer trips (see updateStallTimer), it stops fleeing and charges instead.
+      if(G.stallActive)desired=Math.atan2(d.y,d.x)*180/Math.PI;
+      else if(dst<150)desired=Math.atan2(d.y,d.x)*180/Math.PI+180;}
+    const turn=shortAngle(e.angle,desired),maxT=70*G.speedMult*(G.stallActive?CFG.stallTurnMult:1)*dt;e.angle+=clamp(turn,-maxT,maxT);
+    const sp=G.stallActive?CFG.stallSpeed:CFG.mlSpd*G.speedMult;
+    e.vel=mul(fwd(e.angle),sp);e.pos=wrap(add(e.pos,mul(e.vel,dt)));
+    e.dropTimer-=dt;
+    if(e.dropTimer<=0){e.dropTimer=CFG.mlCd/Math.max(1,G.speedMult*.5);e.pendingMine=newMine(e.pos,"parasite");}
+  }
+}
+
+// Anti-turtle: a boss left undamaged for CFG.bossStallGrace seconds ramps up
+// (G.bossRage 0..1 over CFG.bossStallRamp seconds) so hiding to farm its mines
+// gets steadily more dangerous. Only below the tier where boss mines start
+// homing - from there the fight already escalates on its own.
+function updateBossRage(b,dt){
+  if(b.tier>=CFG.bossMineTrackStartTier){G.bossIdle=0;G.bossRage=0;return;}
+  if(!G.player.alive)return;
+  G.bossIdle+=dt;
+  const before=G.bossRage;
+  G.bossRage=clamp((G.bossIdle-CFG.bossStallGrace)/CFG.bossStallRamp,0,1);
+  if(before===0&&G.bossRage>0){G.stallFlash=2.4;G.stallMsg=(BOSS_NAMES[b.kind]||"VIRUS")+" GROWING RESTLESS!";Snd.stallAlarm();}
+}
+// ---- Tardigrade boss ----
+function segClosest(p,a,b){const abx=b.x-a.x,aby=b.y-a.y,l2=abx*abx+aby*aby||1;
+  const u=clamp(((p.x-a.x)*abx+(p.y-a.y)*aby)/l2,0,1);return V(a.x+abx*u,a.y+aby*u);}
+function tardiBody(b){const f=fwd(b.angle);return{a:sub(b.pos,mul(f,48)),b:add(b.pos,mul(f,56)),r:CFG.tardiBodyR};} // the armoured body is a capsule along its length
+function tardiMouth(b){return add(b.pos,mul(fwd(b.angle),80));}
+function tardiTip(b){const tg=b.tongue;return tg.state==="stuck"&&G.player.alive?G.player.pos:add(tardiMouth(b),mul(tg.dir,tg.len));}
+function tongueHit(b,pt,rad){const tg=b.tongue;if(tg.len<=2)return false;return segDist(pt,tardiMouth(b),tardiTip(b))<=rad+CFG.tardiW/2;}
+function hitTongue(b,dmg){const tg=b.tongue;Snd.tentacleHit(b.pos.x);
+  if(hitBoss(b,dmg)){killBoss();return;}
+  if(tg.state==="stuck")tg.hits++;
+  else if(tg.state==="windup"||tg.state==="out"||tg.state==="hold"){tg.state="retract";tg.fast=true;}} // hurt mid-shot: it snaps the tongue back
+function updateTardigradeBoss(b,dt){
+  const p=G.player,alive=p.alive,tg=b.tongue,rage=G.bossRage;
+  b.bumpCd=Math.max(0,b.bumpCd-dt);
+  const busy=tg.state!=="idle"&&tg.state!=="cool";
+  // Facing: turns slowly toward you, but holds still once it has aimed so the shot can be dodged (it keeps turning while it has you stuck).
+  if(alive&&(!busy||tg.state==="stuck")){const da=((angleTo(b.pos,p.pos)-b.angle+540)%360)-180,turn=(tg.state==="stuck"?60:75)*dt;b.angle+=clamp(da,-turn,turn);}
+  // Walking: a slow wander like the Virus; stops while the tongue is out.
+  if(busy)b.vel=mul(b.vel,Math.max(0,1-6*dt));
+  else{b.wanderTimer-=dt;
+    if(b.wanderTimer<=0){b.wanderTimer=1.6+Math.random()*1.6;const m=b.r+60;b.wanderTarget=V(m+Math.random()*(CFG.W-2*m),m+Math.random()*(CFG.H-2*m));}
+    const d=sub(b.wanderTarget,b.pos);
+    b.vel=len(d)>4?mul(norm(d),CFG.bossSpd*.6*G.speedMult*b.spdF*(1+CFG.bossStallSpeed*rage)):V(0,0);}
+  b.pos=add(b.pos,mul(b.vel,dt));b.walk+=len(b.vel)*dt*.06;
+  // Armoured body: touching it is deadly. Not checked while stuck - that ends at the mouth.
+  if(alive&&tg.state!=="stuck"){const cp=tardiBody(b),q=segClosest(p.pos,cp.a,cp.b),d=dist(p.pos,q);
+    if(d<cp.r+p.r&&p.invuln<=0)damagePlayer();} // touching the armoured body is fatal
+  // Tongue
+  const mouth=tardiMouth(b);
+  if(tg.state==="idle"||tg.state==="cool"){
+    tg.timer-=dt;if(tg.state==="cool"&&tg.timer<=0){tg.state="idle";tg.timer=0;}
+    if(tg.state==="idle"&&tg.timer<=0&&alive){
+      const da=Math.abs(((angleTo(b.pos,p.pos)-b.angle+540)%360)-180);
+      if(da<22&&dist(mouth,p.pos)<CFG.tardiReach*.95){tg.state="windup";tg.timer=Math.max(.35,CFG.tardiWind/(1+.1*(b.n-1)));tg.len=0;tg.dir=fwd(b.angle);Snd.tongueWind(b.pos.x);}}
+  }else if(tg.state==="windup"){
+    tg.len=10+3*Math.sin(G.frame*.8);tg.dir=fwd(b.angle);tg.timer-=dt;
+    if(tg.timer<=0){tg.state="out";tg.len=0;tg.fast=false;tg.dir=alive?norm(sub(p.pos,mouth)):fwd(b.angle);Snd.tongueShoot(b.pos.x);}
+  }else if(tg.state==="out"){
+    tg.len+=CFG.tardiShoot*b.tf*dt;
+    if(alive&&p.invuln<=0&&segDist(p.pos,mouth,add(mouth,mul(tg.dir,tg.len)))<=p.r+CFG.tardiW/2+2){
+      tg.state="stuck";tg.hits=0;tg.pull=Math.max(140,dist(mouth,p.pos)/b.reel);Snd.tongueStick(b.pos.x);}
+    else if(tg.len>=CFG.tardiReach){tg.len=CFG.tardiReach;tg.state="hold";tg.timer=.2;}
+  }else if(tg.state==="hold"){
+    tg.timer-=dt;if(tg.timer<=0){tg.state="retract";tg.fast=false;}
+  }else if(tg.state==="stuck"){
+    if(!alive){tg.state="retract";tg.fast=true;}
+    else{
+      const dm=dist(mouth,p.pos);
+      if(tg.hits>=b.grip||dm>CFG.tardiReach*1.3){tg.state="retract";tg.fast=true;tg.extra=1;} // broken free (or yanked out of reach)
+      else{
+        const dir=norm(sub(mouth,p.pos));p.pos=add(p.pos,mul(dir,tg.pull*dt));tg.len=dm;
+        if(dist(mouth,p.pos)<=p.r+16){tg.state="retract";tg.fast=true;tg.extra=1;if(p.invuln<=0)damagePlayer();} // reeled all the way in
+      }}
+  }
+  if(tg.state==="retract"){
+    tg.len-=CFG.tardiRetract*(tg.fast?1.6:1)*b.tf*dt;
+    if(tg.len<=0){tg.len=0;tg.state="cool";tg.timer=CFG.tardiCd/b.tf/(1+rage*.8)+(tg.extra||0);tg.extra=0;}
+  }
+  b.mineTimer-=dt;
+  if(b.mineTimer<=0){b.mineTimer=CFG.bossMineCd/Math.max(1,G.speedMult*.5);
+    b.pendingMine=newMine(add(b.pos,V((Math.random()*2-1)*30,30)),"boss");b.pendingMine.look="tardi";b.pendingMine.home=Math.min(CFG.tardiMineSpd+CFG.tardiMineStep*(b.n-1),CFG.tardiMineMax);}
+}
+// ---- Amoeba boss ----
+function tentGeom(b,t){const o=add(b.pos,mul(fwd(t.ang),b.r*.55));return{a:o,b:add(o,mul(fwd(t.ang),t.len))};}
+function segDist(p,a,b){const abx=b.x-a.x,aby=b.y-a.y,l2=abx*abx+aby*aby||1;
+  const u=clamp(((p.x-a.x)*abx+(p.y-a.y)*aby)/l2,0,1);return Math.hypot(p.x-(a.x+abx*u),p.y-(a.y+aby*u));}
+function tentHit(b,pt,rad){for(let i=0;i<b.tents.length;i++){const t=b.tents[i];if(t.len<=2)continue;
+  const g=tentGeom(b,t);if(segDist(pt,g.a,g.b)<=rad+CFG.tentW/2)return i;}return -1;}
+function retractTent(b,i){const t=b.tents[i];if(t.state==="idle"||(t.state==="retract"&&t.fast))return;
+  t.state="retract";t.fast=true;Snd.tentacleHit(b.pos.x);} // a shot just yanks it back in - no damage; a fresh one launches soon after
+function updateAmoebaBoss(b,dt){
+  const p=G.player,alive=p.alive,rage=G.bossRage;
+  // Movement: the same hop-to-a-point style as the Virus, but every hop is toward you (stopping short so the tentacles can work), then sidestepping while close.
+  b.wanderTimer-=dt;
+  if(b.wanderTimer<=0){b.wanderTimer=1.3+Math.random()*1.2;const m=b.r+30;let t=b.pos;
+    if(alive){const d=sub(p.pos,b.pos),dd=len(d),stand=b.r+170;
+      if(dd>stand+40)t=add(b.pos,mul(norm(d),Math.min(dd-stand,150+Math.random()*130)));
+      else{const side=norm(V(-d.y,d.x));t=add(b.pos,mul(side,(Math.random()<.5?-1:1)*(110+Math.random()*80)));}}
+    b.wanderTarget=V(clamp(t.x,m,CFG.W-m),clamp(t.y,m,CFG.H-m));}
+  const dv=sub(b.wanderTarget,b.pos),spd=CFG.bossSpd*.8*G.speedMult*b.spdF*(1+CFG.bossStallSpeed*rage);
+  const want=len(dv)>4?mul(norm(dv),spd):V(0,0);
+  b.vel=add(b.vel,mul(sub(want,b.vel),Math.min(1,dt*2.5))); // eases in and out - blobby, not mechanical
+  b.pos=add(b.pos,mul(b.vel,dt));
+  if(alive)b.angle=angleTo(b.pos,p.pos);
+  // Tentacles: launched aimed at you, extend slowly while gently steering, hold a moment, then pull back on their own.
+  const tspd=CFG.tentSpd*b.tentF*(1+CFG.bossStallSpeed*rage);
+  let active=0;for(const t of b.tents)if(t.state==="out"||t.state==="hold")active++;
+  for(const t of b.tents){
+    if(t.state==="idle"){t.timer-=dt;
+      if(alive&&(t.timer<=0||active<b.minActive)){
+        t.state="out";t.len=0;t.fast=false;t.held=0;t.max=CFG.tentMax*(.8+Math.random()*.4);
+        t.ang=angleTo(b.pos,p.pos)+(Math.random()*2-1)*14;active++;Snd.tentacleLaunch(b.pos.x);}
+    }else if(t.state==="out"||t.state==="hold"){
+      if(alive){const da=((angleTo(b.pos,p.pos)-t.ang+540)%360)-180,turn=CFG.tentTurn*dt;t.ang+=clamp(da,-turn,turn);}
+      if(t.state==="out"){t.len+=tspd*dt;if(t.len>=t.max){t.len=t.max;t.state="hold";t.timer=.5;}}
+      else{t.timer-=dt;t.held=(t.held||0)+dt;if(t.timer<=0&&(active>b.minActive||t.held>=4)){t.state="retract";active--;}}
+    }else{ // retract
+      t.len-=tspd*(t.fast?7:2.2)*dt;
+      if(t.len<=0){t.len=0;t.state="idle";t.timer=(t.fast?.3:.5+Math.random()*.7)/(1+rage);}
+    }
+  }
+  b.mineTimer-=dt;
+  if(b.mineTimer<=0){b.mineTimer=CFG.bossMineCd/Math.max(1,G.speedMult*.5);
+    b.pendingMine=newMine(add(b.pos,V((Math.random()*2-1)*30,30)),"boss");b.pendingMine.look="amoeba";} // still a "boss" mine (so it homes at higher tiers like the Virus's), but drawn as a little amoeba
+}
+function updateBoss(b,dt){
+  b.pendingMine=null;b.laserHitPlayer=false;
+  updateBossRage(b,dt);
+  if(b.kind==="amoeba"){updateAmoebaBoss(b,dt);return;}
+  if(b.kind==="tardigrade"){updateTardigradeBoss(b,dt);return;}
+  b.wanderTimer-=dt;
+  if(b.wanderTimer<=0){b.wanderTimer=1.6+Math.random()*1.6;const m=b.r+60;
+    b.wanderTarget=V(m+Math.random()*(CFG.W-2*m),m+Math.random()*(CFG.H-2*m));}
+  const d=sub(b.wanderTarget,b.pos);
+  b.vel=len(d)>4?mul(norm(d),CFG.bossSpd*G.speedMult*(1+CFG.bossStallSpeed*G.bossRage)):V(0,0);
+  b.pos=add(b.pos,mul(b.vel,dt));
+  if(G.player.alive)b.angle=angleTo(b.pos,G.player.pos);
+
+  b.laserTimer-=dt;
+  if(b.laserState==="idle"){
+    if(b.laserTimer<=0){b.laserState="warn";b.laserTimer=CFG.laserWarn;
+      if(G.player.alive){const dd=sub(G.player.pos,b.pos);b.laserDir=len(dd)>1?norm(dd):V(0,1);}}
+  }else if(b.laserState==="warn"){
+    if(b.laserTimer<=0){b.laserState="firing";b.laserTimer=CFG.laserFire;b.laserTick=0;}
+  }else if(b.laserState==="firing"){
+    b.laserTick-=dt;
+    if(b.laserTick<=0){b.laserTick=CFG.laserTick;
+      if(G.player.alive&&laserHits(b,G.player.pos))b.laserHitPlayer=true;}
+    if(b.laserTimer<=0){b.laserState="cooldown";b.laserTimer=CFG.laserCd/Math.max(1,G.speedMult*.6)*(1-CFG.bossStallLaser*G.bossRage);}
+  }else if(b.laserState==="cooldown"){
+    if(b.laserTimer<=0){b.laserState="idle";b.laserTimer=1+Math.random();}
+  }
+  b.mineTimer-=dt;
+  if(b.mineTimer<=0){b.mineTimer=CFG.bossMineCd/Math.max(1,G.speedMult*.5);
+    b.pendingMine=newMine(add(b.pos,V((Math.random()*2-1)*30,30)),"boss");}
+}
+function laserHits(b,pt,w=CFG.laserW){const to=sub(pt,b.pos),proj=to.x*b.laserDir.x+to.y*b.laserDir.y;
+  if(proj<0)return false;const closest=add(b.pos,mul(b.laserDir,proj));return dist(pt,closest)<=w/2;}
+
+function updateBossLaserSound(){
+  if(G.state!=="playing")return;
+  const st=G.boss?G.boss.laserState:null;
+  if(st!==G.prevLaserState){
+    if(st==="warn")Snd.laserWarnBeep();
+    if(st==="firing")Snd.laserLoopStart();
+    else if(G.prevLaserState==="firing")Snd.laserLoopStop();
+  }
+  G.prevLaserState=st;
+}
+
+function explodeMissile(m){if(!m.alive)return;m.alive=false;m.exploded=true;
+  if(G.player.activeMs===m)G.player.activeMs=null;
+  spawnExplosion(m.pos,CFG.blastR,"missile");}
+
+// Bullet/missile damage to the boss is a fraction of its (HP-cap-capped) max
+// HP rather than a flat number, so a hit always visibly moves the health bar
+// and the "bullets-only" kill time stays roughly constant across every tier
+// instead of eroding as HP climbs. See bossBulletDmg()/bossMissileDmg().
+function bossBulletDmg(){return Math.max(1,Math.round(G.boss.maxHp*CFG.bulDmgBossFrac));}
+function bossMissileDmg(){return Math.max(1,Math.round(G.boss.maxHp*CFG.msDmgBossFrac));}
+function spawnExplosion(pos,radius,src){
+  G.explosions.push(newExplosion(pos,radius));
+  src==="missile"?Snd.explMissile(pos.x):Snd.explMine(pos.x);
+  for(const e of G.enemies)if(e.alive&&dist(e.pos,pos)<=radius+e.r)if(hitEnemy(e,99))killEnemy(e);
+  for(const mn of G.mines)if(mn.alive&&dist(mn.pos,pos)<=radius+mn.r)if(hitMine(mn))killMine(mn);
+  if(G.boss&&G.boss.alive&&G.boss.kind==="tardigrade"&&src==="missile"&&G.boss.tongue.len>2){const B=G.boss;
+    if(segDist(pos,tardiMouth(B),tardiTip(B))<=radius+CFG.tardiW/2){if(B.tongue.state==="stuck")B.tongue.hits=B.grip;hitTongue(B,bossMissileDmg());}} // a blast on the tongue is the only way a missile hurts it
+  if(G.boss&&G.boss.alive&&G.boss.kind!=="tardigrade"&&dist(G.boss.pos,pos)<=radius+G.boss.r)
+    if(hitBoss(G.boss,src==="missile"?bossMissileDmg():bossBulletDmg()*5))killBoss();
+  if(G.boss&&G.boss.alive&&G.boss.kind==="amoeba")for(let i=0;i<G.boss.tents.length;i++){const t=G.boss.tents[i];if(t.len<=2)continue;
+    const g=tentGeom(G.boss,t);if(segDist(pos,g.a,g.b)<=radius+CFG.tentW/2)retractTent(G.boss,i);} // blasts pull tentacles back too
+  if(src==="missile"&&G.player.alive&&!G.player.invuln&&dist(G.player.pos,pos)<=radius+G.player.r)damagePlayer();
+}
+function hitEnemy(e,dmg){e.hp-=dmg;return e.hp<=0;}
+function hitMine(m){m.hp-=1;return m.hp<=0;}
+function hitBoss(b,dmg){b.hp-=dmg;G.bossIdle=0;G.bossRage=0;return b.hp<=0;} // any damage calms the boss back down (see updateBossRage)
+function addScore(n){
+  const before=G.score;G.score+=n;
+  if(Math.floor(G.score/CFG.extraLifeScore)>Math.floor(before/CFG.extraLifeScore)){
+    G.lives++;G.extraLifeFlash=1.6;Snd.bugle();
+  }
+}
+function killEnemy(e,award=true){e.alive=false;G.explosions.push(newExplosion(e.pos,e.r*2.2));Snd.explSmall(e.pos.x);
+  if(award){if(e.kind==="kami")addScore(CFG.scK);else if(e.kind==="gun")addScore(CFG.scG);else addScore(CFG.scM);}}
+function killMine(m){m.alive=false;G.explosions.push(newExplosion(m.pos,m.r*2.5));Snd.explSmall(m.pos.x);addScore(CFG.scMine);}
+function killBoss(){
+  const bp=V(G.boss.pos.x,G.boss.pos.y),br=G.boss.r,tier=G.boss.tier;
+  if(tier%2===0)G.pendingBonusTier=tier; // every 2nd tier's boss kicks off a bonus round, consumed when levelclear ends
+  G.boss.alive=false;
+  const rings=6;
+  for(let i=0;i<rings;i++){
+    const off=V((Math.random()*2-1)*br*0.6,(Math.random()*2-1)*br*0.6);
+    const r=br*(1.4+Math.random()*2.2),life=.5+Math.random()*.9;
+    G.explosions.push(newExplosion(add(bp,off),r,life));
+  }
+  G.explosions.push(newExplosion(bp,br*1.15,.22));
+  G.debris=G.debris.concat(newDebrisField(bp,CFG.bossDebris));
+  G.bossDeathPending=true;G.bossDeathTimer=CFG.bossFinalDelay;G.bossDeathPos=bp;G.bossDeathRadius=br;
+  G.hitstopTimer=CFG.bossHitstop;G.shakeMag=Math.max(G.shakeMag,CFG.bossShake);
+  Snd.laserLoopStop();Snd.explBoss(bp.x);
+  addScore(CFG.scBoss);G.boss=null;
+}
+// UI input lockout: after a death the fire button is usually held or being mashed, so for a short time the end-of-run screens ignore
+// FIRE/START, and FIRE must be released and pressed again before it counts - otherwise GAME OVER flashes by straight to the title.
+function lockUi(sec){G.uiLock=sec;G.needRelease=true;}
+function uiReady(inp,dt){
+  if(G.uiLock>0)G.uiLock-=dt;
+  if(!inp.fire)G.needRelease=false;
+  return !(G.uiLock>0)&&!G.needRelease;
+}
+function damagePlayer(){const p=G.player;if(!p.alive||p.invuln>0)return;
+  G.explosions.push(newExplosion(p.pos,p.r*2.5));Snd.explPlayer(p.pos.x);p.alive=false;
+  p.thrusting=false;Snd.thrustStop();G.lives--;
+  G.stallTimer=0;G.stallActive=false; // dying calms enraged parasites - the 30s clock starts over once you're back
+  G.respawnTimer=CFG.respawnT;
+  if(G.lives<0){
+    Snd.laserLoopStop();G.prevLaserState=null;Snd.flatline();
+    if(qualifiesForHighScore(G.score)){
+      G.state="hsintro";G.hsIntroTimer=2.0;G.pendingScore=G.score;G.initials=["A","A","A"];G.initialsIdx=0;
+      // hsIntroTimer is long enough for the flatline tone; the fanfare plays as this beat ends
+      // clear every enemy/hazard off-screen so just the background and the player's
+      // own explosion remain visible for this beat - the explosion itself (pushed
+      // above) and any debris are left alone so they can finish animating.
+      G.enemies=[];G.mines=[];G.bullets=[];G.missiles=[];G.boss=null;
+    }else{G.state="gameover";G.gameOverAnimTime=0;lockUi(2.0);}
+  }}
+
+function handleCollisions(){
+  const p=G.player;
+  for(const b of G.bullets){
+    if(!b.alive||b.owner!=="player")continue;
+    for(const e of G.enemies)if(e.alive&&dist(b.pos,e.pos)<=b.r+e.r){b.alive=false;if(hitEnemy(e,1))killEnemy(e);break;}
+    if(!b.alive)continue;
+    for(const mn of G.mines)if(mn.alive&&dist(b.pos,mn.pos)<=b.r+mn.r){b.alive=false;if(hitMine(mn))killMine(mn);break;}
+    if(!b.alive)continue;
+    if(G.boss&&G.boss.alive&&G.boss.kind==="amoeba"&&dist(b.pos,G.boss.pos)>G.boss.r){const ti=tentHit(G.boss,b.pos,b.r);if(ti>=0){b.alive=false;retractTent(G.boss,ti);}}
+    if(!b.alive)continue;
+    if(G.boss&&G.boss.alive&&G.boss.kind==="tardigrade"){const B=G.boss;
+      if(tongueHit(B,b.pos,b.r)){b.alive=false;hitTongue(B,bossBulletDmg()*CFG.tardiTongueDmg);}
+      else{const cp=tardiBody(B);if(segDist(b.pos,cp.a,cp.b)<=cp.r+b.r){b.alive=false;G.explosions.push(newExplosion(b.pos,7,.14));Snd.tardiPing(b.pos.x);}} // body: shots just ping off
+    }
+    if(!b.alive)continue;
+    if(G.boss&&G.boss.alive&&G.boss.kind!=="tardigrade"&&dist(b.pos,G.boss.pos)<=b.r+G.boss.r){b.alive=false;if(hitBoss(G.boss,bossBulletDmg()))killBoss();}
+  }
+  if(p.alive&&p.invuln<=0){
+    for(const b of G.bullets)if(b.alive&&b.owner==="enemy"&&dist(b.pos,p.pos)<=b.r+p.r){b.alive=false;damagePlayer();}
+  }
+  for(const m of G.missiles){
+    if(!m.alive)continue;let hit=false;
+    for(const e of G.enemies)if(e.alive&&dist(m.pos,e.pos)<=m.r+e.r){hit=true;break;}
+    if(!hit)for(const mn of G.mines)if(mn.alive&&dist(m.pos,mn.pos)<=m.r+mn.r){hit=true;break;}
+    if(!hit&&G.boss&&G.boss.alive&&G.boss.kind!=="tardigrade"&&dist(m.pos,G.boss.pos)<=m.r+G.boss.r)hit=true;
+    if(!hit&&G.boss&&G.boss.alive&&G.boss.kind==="tardigrade"){const cp=tardiBody(G.boss);if(segDist(m.pos,cp.a,cp.b)<=cp.r+m.r||tongueHit(G.boss,m.pos,m.r))hit=true;}
+    if(!hit&&G.boss&&G.boss.alive&&G.boss.kind==="amoeba"&&tentHit(G.boss,m.pos,m.r)>=0)hit=true;
+    if(hit)explodeMissile(m);
+  }
+  if(p.alive&&p.invuln<=0){
+    for(const e of G.enemies){
+      if(e.alive&&dist(e.pos,p.pos)<=e.r+p.r){
+        if(e.kind==="kami")killEnemy(e,false);
+        damagePlayer();break;
+      }
+    }
+    if(p.alive&&p.invuln<=0){
+      for(const mn of G.mines){
+        if(mn.alive&&mn.arm<=0&&dist(mn.pos,p.pos)<=mn.r+p.r){
+          mn.alive=false;spawnExplosion(mn.pos,CFG.blastR*.6,"mine");damagePlayer();break;
+        }
+      }
+    }
+    if(p.alive&&p.invuln<=0&&G.boss&&G.boss.alive&&G.boss.kind!=="tardigrade"&&dist(G.boss.pos,p.pos)<=G.boss.r+p.r)damagePlayer();
+    if(p.alive&&p.invuln<=0&&G.boss&&G.boss.alive&&G.boss.kind==="amoeba"&&tentHit(G.boss,p.pos,p.r)>=0)damagePlayer();
+  }
+}
+function cleanup(){
+  G.bullets=G.bullets.filter(o=>o.alive);G.missiles=G.missiles.filter(o=>o.alive);
+  G.mines=G.mines.filter(o=>o.alive);G.enemies=G.enemies.filter(o=>o.alive);
+}
+function tickEffects(dt){
+  for(const ex of G.explosions){ex.life-=dt;if(ex.life<=0)ex.alive=false;}
+  for(const d of G.debris){
+    d.pos=add(d.pos,mul(d.vel,dt));d.vel=mul(d.vel,Math.max(0,1-1.2*dt));
+    d.angle+=d.spin*dt;d.life-=dt;if(d.life<=0)d.alive=false;
+  }
+  G.explosions=G.explosions.filter(o=>o.alive);
+  G.debris=G.debris.filter(o=>o.alive);
+  if(G.bossDeathPending){
+    G.bossDeathTimer-=dt;
+    if(G.bossDeathTimer<=0){
+      G.bossDeathPending=false;
+      G.explosions.push(newExplosion(G.bossDeathPos,G.bossDeathRadius*4,.6));
+      G.shakeMag=Math.max(G.shakeMag,CFG.bossFinalShake);
+      Snd.explBossFinal(G.bossDeathPos.x);
+    }
+  }
+  if(G.shakeMag>0)G.shakeMag=Math.max(0,G.shakeMag-dt*70);
+  if(G.extraLifeFlash>0)G.extraLifeFlash=Math.max(0,G.extraLifeFlash-dt);
+  if(G.stallFlash>0)G.stallFlash=Math.max(0,G.stallFlash-dt);
+}
+function checkLevelClear(){
+  if(G.state!=="playing")return;
+  if(!G.boss&&G.enemies.length===0&&G.mines.length===0){
+    G.state="levelclear";G.levelClearTimer=2.2;addScore(100*G.level);
+    G.player.thrusting=false;Snd.thrustStop();
+  }
+}
+
+// ---------- bonus round ----------
+// A no-risk "shooting gallery" challenge stage, in the spirit of Galaga's
+// challenge stage: fires right after every 2nd tier's boss kill (see killBoss()).
+// CFG.bonusWaves waves of CFG.bonusSquadron targets each, one pathogen kind per round, flown
+// in scripted formation paths (not the normal enemy AI). Contact never costs a
+// life - it's pure bonus score, plus a missile reward for a wave with zero
+// escapes. Missiles sit out the round entirely (see updateBonusWave) so it
+// stays a pure-bullet precision/speed test.
+function startBonusRound(){
+  const tier=G.pendingBonusTier;G.pendingBonusTier=0;
+  const roundIndex=tier/2; // tier is always even here (see killBoss), so this is 1,2,3...
+  // Each wave flies two different pathogen kinds alternating along the line, and the
+  // pair changes every wave: shuffle all 6 possible pairs of the 4 kinds and deal one per wave.
+  const kinds=["kami","gun","mine","amoeba","worm","flu","tardi"],combos=[];
+  for(let i=0;i<kinds.length;i++)for(let j=i+1;j<kinds.length;j++)combos.push([kinds[i],kinds[j]]);
+  for(let i=combos.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[combos[i],combos[j]]=[combos[j],combos[i]];}
+  const wavePairs=[];for(let w=0;w<CFG.bonusWaves;w++)wavePairs.push(combos[w%combos.length]);
+  G.bullets=[];G.missiles=[];
+  const keepMs=G.player.msLeft;
+  respawnPlayer(G.player,V(CFG.W/2,CFG.H/2));
+  G.player.msLeft=keepMs;
+  G.bonus={tier,roundIndex,wavePairs,waveIndex:0,wave:null,
+    totalKilled:0,totalEscaped:0,missilesEarned:0,
+    introTimer:CFG.bonusIntroTime,resultTimer:0,finalTimer:0,
+    returnLevel:G.level+1};
+  G.state="bonusintro";
+  Snd.bonusCharge();
+}
+function startBonusWave(idx){
+  const durMult=Math.max(CFG.bonusDurMinMult,1-CFG.bonusDurStep*(G.bonus.roundIndex-1));
+  const pathDur=CFG.bonusBaseDur*durMult;
+  // Two different patterns fly at once: every other target belongs to the second pattern, so you can't cover both from the centre.
+  const all=["loop","zig","split"];const pa=all[idx%3],pb=all.filter(x=>x!==pa)[Math.floor(Math.random()*2)];
+  const pattern=pa;let params={};
+  // Single file: every target in a wave follows the same lane/path, so the lane
+  // and loop direction are picked once per wave here rather than per target.
+  const genParams=(pt,zone)=>{const q={}; // zone 0/1 = the two halves of the screen: each pattern works its own half, so no single spot covers both
+    if(pt==="loop"){q.side=Math.random()<.5?"L":"R";q.laneY=230+Math.random()*290;q.amp=CFG.bonusLoopAmp*(Math.random()<.5?1:-1);}
+    else if(pt==="zig"){q.side=Math.random()<.5?"T":"B";q.exitSide=Math.random()<.5?"L":"R";q.laneX=300+Math.random()*400;}
+    else{ // split: 4 off-screen corners; opposite = diagonal mirror, branch = same-row other column
+      const corners=[V(-40,-40),V(CFG.W+40,-40),V(-40,CFG.H+40),V(CFG.W+40,CFG.H+40)]; // TL,TR,BL,BR
+      const ci=Math.floor(Math.random()*4);
+      Object.assign(q,{corner:corners[ci],opp:corners[3-ci],branch:corners[ci^1],cx:CFG.W/2,cy:CFG.H/2});}
+    return q;};
+  const zA=Math.random()<.5?0:1;params=genParams(pattern,zA);const paramsB=genParams(pb,1-zA);
+  G.bonus.waveIndex=idx;
+  G.bonus.wave={pattern,params,patternB:pb,paramsB,kinds:G.bonus.wavePairs[idx],pathDur,spawned:0,spawnTimer:0,killed:0,escaped:0,targets:[]};
+  G.player.pos=V(CFG.W/2,CFG.H/2);G.player.vel=V(0,0); // recenter for each fresh wave
+  G.state="bonuswave";
+}
+// Position for a bonus target at its own path-local progress t (0..1). Each
+// target carries everything its pattern needs (set up in makeBonusTarget), so
+// this is a pure function of t - no physics, just scripted motion.
+function bonusPatternPos(tg,t){
+  t=clamp(t,0,1);const o=tg.offset;
+  if(tg.pat==="loop"){
+    const x=tg.x0+(tg.x1-tg.x0)*t;
+    const y=tg.laneY+Math.sin(t*Math.PI)*tg.amp;
+    return V(x+o.x,y+o.y);
+  }
+  if(tg.pat==="zig"){
+    if(t<=.55){
+      const u=t/.55;
+      const x=tg.laneX+Math.sin(u*Math.PI*tg.zigCount)*tg.zigAmp;
+      const y=tg.entryY+(tg.centerY-tg.entryY)*u;
+      return V(x+o.x,y+o.y);
+    }else{
+      const u=(t-.55)/.45;
+      const x=tg.laneX+(tg.exitX-tg.laneX)*u;
+      return V(x+o.x,tg.centerY+o.y);
+    }
+  }
+  // split
+  if(t<=.5){
+    const u=t/.5;
+    return V(tg.x0+(tg.cx-tg.x0)*u+o.x,tg.y0+(tg.cy-tg.y0)*u+o.y);
+  }
+  const u=(t-.5)/.5,ex=tg.group==="A"?tg.oppX:tg.branchX,ey=tg.group==="A"?tg.oppY:tg.branchY;
+  return V(tg.cx+(ex-tg.cx)*u+o.x,tg.cy+(ey-tg.cy)*u+o.y);
+}
+function makeBonusTarget(w,off,group){
+  const second=w.spawned%2===1,pattern=second?w.patternB:w.pattern,prm=second?w.paramsB:w.params,laneY=prm.laneY,laneX=prm.laneX;
+  const base={kind:w.kinds[w.spawned%2],alive:true,t:0,dur:w.pathDur,animSeed:Math.random()*1000,angle:0};
+  if(pattern==="loop"){
+    const side=prm.side;
+    Object.assign(base,{pat:"loop",x0:side==="L"?-40:CFG.W+40,x1:side==="L"?CFG.W+40:-40,
+      laneY,amp:prm.amp,offset:V(0,off)});
+  }else if(pattern==="zig"){
+    const side=prm.side,exitSide=prm.exitSide;
+    Object.assign(base,{pat:"zig",laneX,entryY:side==="T"?-40:CFG.H+40,centerY:CFG.H/2,
+      exitX:exitSide==="L"?-40:CFG.W+40,zigCount:CFG.bonusZigCount,zigAmp:CFG.bonusZigAmp,offset:V(off,0)});
+  }else{
+    const c=prm.corner,opp=prm.opp,branch=prm.branch;
+    Object.assign(base,{pat:"split",cx:prm.cx,cy:prm.cy,x0:c.x,y0:c.y,oppX:opp.x,oppY:opp.y,branchX:branch.x,branchY:branch.y,
+      group,offset:V(off*.7,off*.7)});
+  }
+  base.pos=bonusPatternPos(base,0);base.prevPos=base.pos;
+  return base;
+}
+function spawnBonusTarget(w){
+  const group=(w.spawned>>1)%2===0?"A":"B"; // alternates so half of each split-pattern group takes each exit
+  w.targets.push(makeBonusTarget(w,0,group));
+  w.spawned++;
+}
+function bonusWaveDone(w){return w.spawned>=CFG.bonusSquadron&&w.targets.every(tg=>!tg.alive);}
+function updateBonusWave(dt,inp){
+  const w=G.bonus.wave;
+  const inp2=Object.assign({},inp,{missilePressed:false}); // missiles sit out the bonus round
+  if(G.player.alive)updatePlayerShip(dt,inp2);
+  for(const b of G.bullets){b.pos=wrap(add(b.pos,mul(b.vel,dt)));b.life-=dt;if(b.life<=0)b.alive=false;}
+  G.bullets=G.bullets.filter(o=>o.alive);
+  w.spawnTimer-=dt;
+  if(w.spawnTimer<=0&&w.spawned<CFG.bonusSquadron){spawnBonusTarget(w);w.spawnTimer=CFG.bonusSpawnGap;}
+  for(const tg of w.targets){
+    if(!tg.alive)continue;
+    tg.prevPos=tg.pos;tg.t+=dt/tg.dur;
+    if(tg.t>=1){tg.alive=false;w.escaped++;continue;}
+    tg.pos=bonusPatternPos(tg,tg.t);
+    const d=sub(tg.pos,tg.prevPos);if(len(d)>.5)tg.angle=Math.atan2(d.y,d.x)*180/Math.PI;
+  }
+  for(const b of G.bullets){
+    if(!b.alive||b.owner!=="player")continue;
+    for(const tg of w.targets){
+      if(tg.alive&&dist(b.pos,tg.pos)<=b.r+BONUS_R[tg.kind]){
+        b.alive=false;tg.alive=false;w.killed++;addScore(CFG.bonusScorePer);
+        G.explosions.push(newExplosion(tg.pos,BONUS_R[tg.kind]*2.2));Snd.explSmall(tg.pos.x);
+        break;
+      }
+    }
+  }
+  if(bonusWaveDone(w)){
+    G.bonus.totalKilled+=w.killed;G.bonus.totalEscaped+=w.escaped;
+    w.earnedMissile=w.killed>=Math.ceil(CFG.bonusSquadron*CFG.bonusMissilePct);
+    if(w.earnedMissile){G.player.msLeft++;G.bonus.missilesEarned++;}
+    G.player.thrusting=false;Snd.thrustStop(); // the wave is over - stop the engine sound
+    G.player.pos=V(CFG.W/2,CFG.H-90);G.player.vel=V(0,0); // step out of the way of the center-screen result text
+    G.state="bonuswaveresult";G.bonus.resultTimer=CFG.bonusWaveResultTime;
+  }
+}
+
+// ---------- draw ----------
+const ctx=document.getElementById("cv").getContext("2d");
+// Battlefield backdrop: a soft dark-red vignette (inside a blood vessel)
+// instead of flat black. Built once since the canvas size never changes.
+const bgGradient=(()=>{
+  const g=ctx.createRadialGradient(CFG.W/2,CFG.H/2,80,CFG.W/2,CFG.H/2,Math.max(CFG.W,CFG.H)*.75);
+  g.addColorStop(0,"#13050a");g.addColorStop(.55,"#0a0308");g.addColorStop(1,"#030103");
+  return g;
+})();
+function strokePoly(pts,color,w=2){ctx.strokeStyle=color;ctx.lineWidth=w;ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+  ctx.closePath();ctx.stroke();}
+function strokeOpenPoly(pts,color,w=2){ctx.strokeStyle=color;ctx.lineWidth=w;ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+  ctx.stroke();}
+// Points for a wavy, whip-like strand from `from` toward `to` - used for the
+// boss laser so it reads as an organic tendril rather than a straight beam.
+// The wave ramps up over the first stretch so it stays anchored to the boss
+// instead of visibly detaching from its body; actual hit detection stays on
+// the straight line (b.laserDir), this only changes how it's drawn.
+function squigglePoints(from,to,amp,freq,phase){
+  const dx=to.x-from.x,dy=to.y-from.y,dist=Math.hypot(dx,dy)||1;
+  const ux=dx/dist,uy=dy/dist,px=-uy,py=ux;
+  const segs=Math.max(10,Math.floor(dist/16)),pts=[];
+  for(let i=0;i<=segs;i++){
+    const t=i/segs,d=t*dist,taper=Math.min(1,t*6);
+    const off=Math.sin(d*freq+phase)*amp*taper;
+    pts.push(V(from.x+ux*d+px*off,from.y+uy*d+py*off));
+  }
+  return pts;
+}
+function drawShip(shape,pos,angle,color,scale=1){
+  const pts=rotPts(shape,angle).map(p=>V(pos.x+p.x*scale,pos.y+p.y*scale));strokePoly(pts,color);}
+function drawParts(parts,pos,angle,color,scale=1,lw=2){
+  for(const part of parts){
+    const pts=rotPts(part.pts,angle).map(p=>V(pos.x+p.x*scale,pos.y+p.y*scale));
+    const pc=part.col||color;
+    if(part.closed===false)strokeOpenPoly(pts,pc,lw);else strokePoly(pts,pc,lw);
+  }
+}
+// "Mutated Virus" boss: a circular capsid ringed with irregular spike
+// proteins (varied length and a mix of round/petal tips, per the reference
+// icon) plus filled genetic-material clusters inside instead of a hollow
+// ring, so it reads as a solid organism rather than an empty circle.
+function drawMutatedIcon(cx,cy,r,color,dimColor,spin=0){
+  const ring=COL.laserWarn; // red outline on the outer capsid + nucleus, matching the red core of the viral genome strand it fires
+  const nSpikes=14;
+  for(let i=0;i<nSpikes;i++){
+    const jig=Math.sin(i*2.3)*6; // deterministic per-spike angle jitter - irregular, not random-flicker
+    const rad=((360/nSpikes)*i+spin+jig)*Math.PI/180;
+    const lenMult=1+.3*Math.sin(i*1.7+1); // .7x..1.3x length variance
+    const roundTip=i%3!==1; // mix of round-ball and petal tips
+    const bx=cx+Math.cos(rad)*r,by=cy+Math.sin(rad)*r;
+    const spikeLen=r*.32*lenMult;
+    const tx=cx+Math.cos(rad)*(r+spikeLen),ty=cy+Math.sin(rad)*(r+spikeLen);
+    ctx.strokeStyle=color;ctx.lineWidth=Math.max(1.5,r*.045);
+    ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(tx,ty);ctx.stroke();
+    if(roundTip){ctx.beginPath();ctx.arc(tx,ty,Math.max(1.5,r*.065),0,7);ctx.stroke();}
+    else{ctx.save();ctx.translate(tx,ty);ctx.rotate(rad);
+      ctx.beginPath();ctx.ellipse(0,0,Math.max(1.6,r*.09),Math.max(1,r*.05),0,0,7);ctx.stroke();
+      ctx.restore();}
+  }
+  ctx.lineWidth=Math.max(2,r*.075);ctx.strokeStyle=ring;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.stroke();
+  // filled genetic-material clusters inside (solid, not hollow), each ringed in red to match the capsid
+  const segs=[[-.3,-.25,5,0],[.18,-.3,4,0],[-.15,.2,4.5,0],[.32,.18,4,0],[0,0,5,1],[-.05,-.42,3.5,0]];
+  ctx.fillStyle=color;
+  for(const[sx,sy,rr0,isBean] of segs){
+    const px=cx+sx*r*.82,py=cy+sy*r*.82,rr=Math.max(1.4,r*(rr0/46));
+    ctx.beginPath();
+    if(isBean)ctx.ellipse(px,py,rr*1.5,rr*.8,sx+sy,0,7);else ctx.arc(px,py,rr,0,7);
+    ctx.fill();
+    ctx.strokeStyle=ring;ctx.lineWidth=Math.max(.9,r*.028);ctx.stroke();
+  }
+}
+// Influenza-style particle: a spiky ball like the coronavirus, but with
+// petal-shaped (not round) spike tips and a few scattered comma/oval shapes
+// inside standing in for the segmented RNA genome - used for the boss's
+// dropped virion mines (colored to match the boss). The parasite's own
+// dropped spore mines use drawAmoebaIcon instead, below.
+function drawFluIcon(cx,cy,r,color,dimColor,spin=0){
+  const nSpikes=10;
+  ctx.strokeStyle=color;ctx.lineWidth=Math.max(1.2,r*.12);
+  for(let i=0;i<nSpikes;i++){
+    const rad=((360/nSpikes)*i+spin)*Math.PI/180;
+    const bx=cx+Math.cos(rad)*r,by=cy+Math.sin(rad)*r;
+    const tx=cx+Math.cos(rad)*(r+r*.45),ty=cy+Math.sin(rad)*(r+r*.45);
+    ctx.beginPath();ctx.moveTo(bx,by);ctx.lineTo(tx,ty);ctx.stroke();
+    ctx.save();ctx.translate(tx,ty);ctx.rotate(rad);
+    ctx.beginPath();ctx.ellipse(0,0,Math.max(1.3,r*.16),Math.max(.8,r*.09),0,0,7);ctx.stroke();
+    ctx.restore();
+  }
+  ctx.lineWidth=Math.max(1.5,r*.12);ctx.strokeStyle=color;
+  ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.stroke();
+  const segs=[[-.35,-.25,1],[.15,-.35,.6],[-.1,.15,-.3],[.35,.2,1.1],[0,-.05,.2]];
+  ctx.strokeStyle=dimColor;ctx.lineWidth=Math.max(1,r*.09);
+  for(const[sx,sy,rotv] of segs){
+    ctx.save();ctx.translate(cx+sx*r,cy+sy*r);ctx.rotate(rotv);
+    ctx.beginPath();ctx.ellipse(0,0,Math.max(1,r*.22),Math.max(.6,r*.1),0,0,7);ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// Amoeba-style blob for the parasite's own dropped spore mines: an irregular
+// wobbling membrane with pseudopod bulges and a blobby nucleus/vacuoles
+// inside, so these read as a distinct organism from the boss's spiky viral
+// mines rather than reusing the same icon.
+function drawTardiIcon(cx,cy,r,color,ang,t){ // a tiny tardigrade: scalloped body, four leg pairs, head with a mouth ring
+  const L=r*1.35,W=r*.75;ctx.save();ctx.translate(cx,cy);ctx.rotate(ang);ctx.strokeStyle=color;ctx.lineWidth=1.6;ctx.lineCap="round";ctx.lineJoin="round";
+  for(let k=0;k<4;k++){const x=-L+(k+.5)*L/2,ph=Math.sin(t*1.6+k*1.9)*.35;
+    for(const sg of [-1,1]){ctx.beginPath();ctx.moveTo(x,sg*W*.8);ctx.lineTo(x+Math.sin(.4+ph)*r*.5,sg*(W*.8+r*.5));ctx.lineTo(x-r*.3+ph*r*.3,sg*(W*.8+r*.85));ctx.stroke();}}
+  ctx.fillStyle="rgba(14,11,6,.9)";ctx.beginPath();
+  for(let i=0;i<=24;i++){const u=-1+i/12*(i<=12?1:0),x=i<=12?-L+2*L*i/12:L-2*L*(i-12)/12,e=Math.pow(Math.max(0,1-Math.pow(Math.abs(x/L),2.6)),1/2.6),sc=1+.08*Math.cos(x/L*Math.PI*4),y=(i<=12?-1:1)*W*e*sc;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.beginPath();ctx.arc(L+r*.15,0,r*.28,0,7);ctx.strokeStyle=COL.accent;ctx.stroke();
+  ctx.restore();}
+function drawWormIcon(cx,cy,r,color,core,ang,t){ // a little segmented worm that wriggles: body of shrinking rings along a travelling sine wave, head with an eye
+  const N=7,len0=r*2.1;ctx.save();ctx.translate(cx,cy);ctx.rotate(ang);ctx.strokeStyle=color;ctx.lineWidth=1.6;ctx.lineJoin="round";
+  const pts=[];for(let i=0;i<N;i++){const u=i/(N-1),x=len0*(.5-u),y=Math.sin(t*1.8-u*5)*r*.4*(.35+u);pts.push([x,y,r*(.46-.26*u*u+(i===0?.08:0))]);}
+  ctx.beginPath();pts.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.strokeStyle="rgba(255,255,255,.12)";ctx.lineWidth=r*.6;ctx.lineCap="round";ctx.stroke();
+  ctx.strokeStyle=color;ctx.lineWidth=1.6;
+  for(let i=N-1;i>=0;i--){const q=pts[i];ctx.fillStyle="rgba(10,6,8,.9)";ctx.beginPath();ctx.arc(q[0],q[1],q[2],0,7);ctx.fill();ctx.stroke();}
+  // green star inside the head ring
+  const hr=pts[0][2]*.78;ctx.fillStyle=core;ctx.beginPath();
+  for(let k=0;k<10;k++){const a=k*Math.PI/5-Math.PI/2,rr=k%2?hr*.42:hr;const X=pts[0][0]+Math.cos(a)*rr,Y=pts[0][1]+Math.sin(a)*rr;k?ctx.lineTo(X,Y):ctx.moveTo(X,Y);}
+  ctx.closePath();ctx.fill();
+  ctx.restore();}
+function drawAmoebaIcon(cx,cy,r,color,dimColor,wob=0){
+  const n=10,pts=[];
+  for(let i=0;i<=n;i++){
+    const a=(360/n)*i*Math.PI/180;
+    const bulge=1+.24*Math.sin(i*1.9+wob)+.13*Math.sin(i*3.1-wob*1.4);
+    pts.push(V(cx+Math.cos(a)*r*bulge,cy+Math.sin(a)*r*bulge));
+  }
+  strokePoly(pts,color,Math.max(1.5,r*.14));
+  ctx.fillStyle=dimColor;
+  ctx.beginPath();ctx.ellipse(cx-r*.12,cy+r*.06,r*.34,r*.27,wob*.2,0,7);ctx.fill();
+  ctx.strokeStyle=dimColor;ctx.lineWidth=Math.max(1,r*.08);
+  ctx.beginPath();ctx.ellipse(cx+r*.36,cy-r*.3,r*.15,r*.12,0,0,7);ctx.stroke();
+  ctx.beginPath();ctx.ellipse(cx-r*.32,cy-r*.28,r*.12,r*.1,0,0,7);ctx.stroke();
+}
+function draw(){
+  ctx.fillStyle=bgGradient;ctx.fillRect(0,0,CFG.W,CFG.H);
+  ctx.save();
+  if(G.shakeMag>0.3){
+    ctx.translate((Math.random()*2-1)*G.shakeMag,(Math.random()*2-1)*G.shakeMag);
+  }
+  for(const c of G.cells){ // faint drifting blood cells - deep background, kept dim so it never distracts
+    ctx.fillStyle=`rgba(200,50,70,${c.a})`;
+    ctx.beginPath();ctx.ellipse(c.x,c.y,c.r,c.r*.55,c.rot,0,7);ctx.fill();
+  }
+  for(const s of G.stars){ // soft hollow dark-red flecks, not bright white "stars"
+    const a=.18+.3*s.s;
+    ctx.strokeStyle=`rgba(150,45,55,${a})`;ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(s.x,s.y,s.s<.8?1.4:2.4,0,7);ctx.stroke();}
+  if(G.state==="menu"){
+    if(G.menuShowScores)drawHighScores("PRESS ENTER / FIRE / TAP TO BEGIN");else drawMenu();
+    ctx.restore();return;
+  }
+  if(G.state==="hsintro"){drawWorld();ctx.restore();drawEcg();return;} // background + the player's explosion playing out, enemies cleared, no HUD - a beat before the high-score entry screen
+  drawWorld();
+  ctx.restore();
+  drawHud();
+  if(G.state==="paused")centerText("PAUSED",Touch.active?"Tap the play button at the top to continue":"Press P / Esc to resume");
+  else if(G.state==="levelclear")drawLevelClear();
+  else if(G.state==="gameover")drawGameOver();
+  else if(G.state==="enterinitials")drawEnterInitials();
+  else if(G.state==="highscores")drawHighScores();
+  else if(G.state==="bonusintro")drawBonusIntro();
+  else if(G.state==="bonuswaveresult")drawBonusWaveResult();
+  else if(G.state==="bonusfinal")drawBonusFinal();
+}
+const INITIAL_CHARS="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+function cycleChar(cur,dir){const i=INITIAL_CHARS.indexOf(cur);return INITIAL_CHARS[(i+dir+INITIAL_CHARS.length)%INITIAL_CHARS.length];}
+function drawEnterInitials(){
+  ctx.textAlign="center";
+  drawVText("NEW HIGH SCORE",CFG.W/2,CFG.H/2-150,6.4,"#5aff8c",3,0);
+  ctx.fillStyle=COL.hud;ctx.font="bold 20px Consolas,monospace";
+  ctx.fillText(`SCORE ${G.pendingScore}`,CFG.W/2,CFG.H/2-90);
+  const slotX=[CFG.W/2-70,CFG.W/2,CFG.W/2+70];
+  for(let i=0;i<3;i++){
+    const active=i===G.initialsIdx,col=active?COL.player:COL.hud;
+    drawVText(G.initials[i],slotX[i],CFG.H/2,10,col,4,0);
+    if(active&&Math.floor(G.frame/15)%2===0){
+      ctx.strokeStyle=COL.player;ctx.lineWidth=3;
+      ctx.beginPath();ctx.moveTo(slotX[i]-18,CFG.H/2+38);ctx.lineTo(slotX[i]+18,CFG.H/2+38);ctx.stroke();
+    }
+  }
+  ctx.fillStyle=COL.hudDim;ctx.font="14px Consolas,monospace";
+  ctx.fillText("LEFT/RIGHT: change letter    FIRE: confirm    MISSILE: back",CFG.W/2,CFG.H/2+90);
+  ctx.textAlign="left";
+}
+function drawHighScores(bottomText="PRESS ENTER / FIRE / TAP TO CONTINUE"){
+  ctx.textAlign="center";
+  drawVText("HIGH SCORES",CFG.W/2,CFG.H/2-190,6.4,"#5aff8c",3,0);
+  ctx.font="bold 18px Consolas,monospace";
+  let y=CFG.H/2-100;
+  for(let i=0;i<HiScores.length;i++){
+    const hs=HiScores[i];
+    const isNew=i===G.newHighScoreIdx; // the entry the player just set, highlighted regardless of rank
+    if(isNew){
+      const pulse=.65+.35*Math.abs(Math.sin(G.frame*.12));
+      ctx.fillStyle=`rgba(90,255,140,${pulse})`;ctx.font="bold 20px Consolas,monospace";
+    }else{ctx.fillStyle=i===0?COL.player:COL.hud;ctx.font="bold 18px Consolas,monospace";}
+    ctx.fillText(`${isNew?"> ":""}${i+1}.  ${hs.initials}   ${String(hs.score).padStart(6,"0")}${isNew?" <":""}`,CFG.W/2,y);
+    y+=34;
+  }
+  ctx.fillStyle=COL.hudDim;ctx.font="15px Consolas,monospace";
+  ctx.fillText(bottomText,CFG.W/2,y+26);
+  ctx.textAlign="left";
+}
+function drawWorld(){
+  for(const m of G.mines){
+    const pr=m.r*(1+.08*Math.sin(m.pulse));
+    if(m.source==="parasite"){
+      drawWormIcon(m.pos.x,m.pos.y,pr,m.arm<=0?COL.mine_:COL.hudDim,COL.amoebaCore,Math.atan2(m.vel.y,m.vel.x||.01),m.pulse);
+    }else if(m.look==="tardi"){
+      drawTardiIcon(m.pos.x,m.pos.y,pr*1.05,m.arm<=0?COL.bossTardi:COL.hudDim,Math.atan2(m.vel.y,m.vel.x),m.pulse);
+    }else if(m.look==="amoeba"){
+      drawAmoebaIcon(m.pos.x,m.pos.y,pr,m.arm<=0?COL.bossAmoeba:COL.hudDim,COL.amoebaCore,m.pulse);
+    }else{
+      drawFluIcon(m.pos.x,m.pos.y,pr,m.arm<=0?COL.bossMine:COL.hudDim,COL.bossMineCore,m.pulse*25);
+    }
+  }
+  for(const e of G.enemies){
+    const parts=e.kind==="kami"?PARTS.kami:e.kind==="gun"?PARTS.gun:PARTS.mine;
+    const col=e.kind==="kami"?COL.kami:e.kind==="gun"?COL.gun:(G.stallActive?COL.laserWarn:COL.mine_);
+    const anim=e.kind==="kami"?flagellumParts(e.animSeed,G.frame):
+      e.kind==="gun"?phageLegParts(e.animSeed,G.frame):parasiteLegParts(e.animSeed,G.frame);
+    drawParts(e.kind==="mine"&&G.stallActive?PARTS.mineEnraged:parts,e.pos,e.angle,col);
+    drawParts(anim,e.pos,e.angle,col,1,e.kind==="mine"?1.4:2);
+  }
+  if(G.boss)drawBoss(G.boss);
+  if(G.bonus&&G.bonus.wave&&(G.state==="bonuswave"||(G.state==="paused"&&G.pausedFrom==="bonuswave"))){
+    for(const tg of G.bonus.wave.targets)if(tg.alive)drawBonusTarget(tg);
+  }
+  for(const b of G.bullets){
+    const col=b.owner==="player"?COL.bullet:COL.bulletE;
+    const tl=len(b.vel)>0?sub(b.pos,mul(norm(b.vel),6)):b.pos;
+    ctx.strokeStyle=col;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(tl.x,tl.y);ctx.lineTo(b.pos.x,b.pos.y);ctx.stroke();
+    ctx.fillStyle=col;ctx.beginPath();ctx.arc(b.pos.x,b.pos.y,b.r,0,7);ctx.fill();
+  }
+  for(const m of G.missiles){
+    // spinning ninja star that cycles through the colour spectrum (dimmer until armed)
+    const spin=G.frame*.55+m.pos.x*.01,hue=(G.frame*9+m.pos.y*.3)%360,star=[];
+    for(let k=0;k<8;k++){const a=spin+k*Math.PI/4,rr=k%2?3.2:10;star.push(V(m.pos.x+Math.cos(a)*rr,m.pos.y+Math.sin(a)*rr));}
+    ctx.save();ctx.globalAlpha=m.arm<=0?1:.55;ctx.shadowColor=`hsl(${hue},100%,60%)`;ctx.shadowBlur=m.arm<=0?10:0;
+    strokePoly(star,`hsl(${hue},100%,62%)`);ctx.fillStyle=`hsl(${(hue+180)%360},100%,70%)`;ctx.beginPath();ctx.arc(m.pos.x,m.pos.y,1.8,0,7);ctx.fill();ctx.restore();
+  }
+  for(const ex of G.explosions){
+    const prog=1-clamp(ex.life/ex.maxLife,0,1),r=Math.max(1,ex.maxR*prog),a=1-prog;
+    const c=Math.floor(255*(.4+.6*a)),c2=Math.floor(180*(.4+.6*a)),c3=Math.floor(60*(.4+.6*a));
+    ctx.strokeStyle=`rgb(${c},${c2},${c3})`;ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(ex.pos.x,ex.pos.y,r,0,7);ctx.stroke();
+    ctx.beginPath();ctx.arc(ex.pos.x,ex.pos.y,Math.max(1,r/3),0,7);ctx.stroke();
+  }
+  for(const d of G.debris){
+    const a=clamp(d.life/d.maxLife,0,1),half=d.len/2;
+    const p1=add(d.pos,mul(fwd(d.angle),half)),p2=add(d.pos,mul(fwd(d.angle+180),half));
+    ctx.globalAlpha=a;ctx.strokeStyle=d.color;ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  const p=G.player;
+  if(p.alive&&!(p.invuln>0&&Math.floor(G.frame/4)%2===0)){
+    drawParts(PARTS.player,p.pos,p.angle,COL.player);
+    if(p.thrusting){const back=sub(p.pos,mul(fwd(p.angle),9.5)),flick=.6+Math.random()*.7;
+      const side=mul(fwd(p.angle+90),(Math.random()*2-1)*3);
+      const tip=add(sub(back,mul(fwd(p.angle),10*flick)),side);
+      ctx.strokeStyle=COL.flame;ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(back.x,back.y);ctx.lineTo(tip.x,tip.y);ctx.stroke();
+    }
+  }
+}
+function drawBonusTarget(tg){
+  if(tg.kind==="worm"){drawWormIcon(tg.pos.x,tg.pos.y,BONUS_R.worm,COL.mine_,COL.amoebaCore,tg.angle*Math.PI/180,G.frame*.1+tg.animSeed);return;}
+  if(tg.kind==="flu"){drawFluIcon(tg.pos.x,tg.pos.y,BONUS_R.flu,COL.bossMine,COL.bossMineCore,G.frame*1.5+tg.animSeed);return;}
+  if(tg.kind==="tardi"){drawTardiIcon(tg.pos.x,tg.pos.y,BONUS_R.tardi,COL.bossTardi,tg.angle*Math.PI/180,G.frame*.1+tg.animSeed);return;}
+  if(tg.kind==="amoeba"){drawAmoebaIcon(tg.pos.x,tg.pos.y,BONUS_R.amoeba,COL.mine_,COL.amoebaCore,G.frame*.1+tg.animSeed);return;}
+  const parts=tg.kind==="kami"?PARTS.kami:tg.kind==="gun"?PARTS.gun:PARTS.mine;
+  const col=tg.kind==="kami"?COL.kami:tg.kind==="gun"?COL.gun:COL.mine_;
+  const anim=tg.kind==="kami"?flagellumParts(tg.animSeed,G.frame):
+    tg.kind==="gun"?phageLegParts(tg.animSeed,G.frame):parasiteLegParts(tg.animSeed,G.frame);
+  drawParts(parts,tg.pos,tg.angle,col);
+  drawParts(anim,tg.pos,tg.angle,col,1,tg.kind==="mine"?1.4:2);
+}
+function drawTardigradeBoss(b){
+  const tg=b.tongue,col=G.bossRage>0?COL.laserWarn:COL.bossTardi,LEG="#d9a24a",FOLD="#b99552",ACC=COL.accent;
+  const pl=(pts,c,lw,close)=>{ctx.beginPath();pts.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));if(close!==false)ctx.closePath();ctx.strokeStyle=c;ctx.lineWidth=lw;ctx.lineJoin="round";ctx.lineCap="round";ctx.stroke();};
+  ctx.save();ctx.translate(b.pos.x,b.pos.y);ctx.rotate(b.angle*Math.PI/180);
+  const L=80,W=37,SEG=2*L/4,C0=-L+SEG/2,lw=2;
+  const eyeP=G.player.alive?angleTo(b.pos,G.player.pos):b.angle,eyeA=(eyeP-b.angle)*Math.PI/180,eyeM=G.player.alive?1:0; // pupils look at your ship
+  const env=u=>Math.pow(Math.max(0,1-Math.pow(Math.abs(u),2.6)),1/2.6);
+  const hw=x0=>W*env(x0/L)*(1+.065*Math.cos(2*Math.PI*(x0-C0)/SEG));
+  const top=[],bot=[];for(let i=0;i<=60;i++){const x0=-L+2*L*i/60;top.push([x0,-hw(x0)]);bot.push([x0,hw(x0)]);}
+  const body=top.concat(bot.reverse());
+  for(let k=0;k<4;k++){const cx=C0+k*SEG,ph=Math.sin(b.walk*1.2+k*1.9);
+    for(const sg of [-1,1]){
+      const f1=.3+ph*.14,bb=.8-ph*.12,L1=22,L2=20;
+      const hip=[cx,sg*(hw(cx)-3)],v1=[Math.sin(f1),sg*Math.cos(f1)],knee=[hip[0]+v1[0]*L1,hip[1]+v1[1]*L1];
+      const v2=[-Math.sin(bb),sg*Math.cos(bb)],foot=[knee[0]+v2[0]*L2,knee[1]+v2[1]*L2];
+      const n1=[-v1[1],v1[0]],n2=[-v2[1],v2[0]];
+      pl([[hip[0]+n1[0]*10,hip[1]+n1[1]*10],[knee[0]+n1[0]*7,knee[1]+n1[1]*7],[knee[0]-n1[0]*7,knee[1]-n1[1]*7],[hip[0]-n1[0]*10,hip[1]-n1[1]*10]],LEG,lw,false);
+      pl([[knee[0]+n2[0]*7,knee[1]+n2[1]*7],[foot[0]+n2[0]*5,foot[1]+n2[1]*5],[foot[0]-n2[0]*5,foot[1]-n2[1]*5],[knee[0]-n2[0]*7,knee[1]-n2[1]*7]],LEG,lw,false);
+      for(let q=-1;q<=1;q++){const b0=[foot[0]+n2[0]*q*3.6,foot[1]+n2[1]*q*3.6],ctl=[b0[0]+v2[0]*7,b0[1]+v2[1]*7+q*sg*1.5],end=[b0[0]+v2[0]*10-10,b0[1]+v2[1]*10+q*sg*2.5];
+        ctx.beginPath();ctx.moveTo(b0[0],b0[1]);ctx.quadraticCurveTo(ctl[0],ctl[1],end[0],end[1]);ctx.strokeStyle=LEG;ctx.lineWidth=lw*.95;ctx.lineCap="round";ctx.stroke();}}}
+  ctx.fillStyle="rgba(14,11,6,.92)";ctx.beginPath();body.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.closePath();ctx.fill();
+  pl(body,col,lw*1.25);
+  for(let k=1;k<4;k++){const fx=-L+k*SEG,h=hw(fx)*.97,pts=[];for(let i=0;i<=8;i++){const v=i/8*2-1;pts.push([fx+Math.cos(v*1.3)*7-3,v*h]);}pl(pts,FOLD,lw*.8,false);}
+  const hx=L-27;ctx.fillStyle="rgba(14,11,6,.95)";ctx.beginPath();ctx.ellipse(hx+8,0,22,22,0,0,7);ctx.fill();
+  const hp=[];for(let i=0;i<=14;i++){const a=-1.3+2.6*i/14;hp.push([hx+8+Math.cos(a)*22,Math.sin(a)*22]);}pl(hp,col,lw*1.25,false);
+  const glow=tg.state==="windup"?.5+.5*Math.sin(G.frame*.6):0;
+  ctx.strokeStyle=glow>0?"#ffd24a":ACC;ctx.lineWidth=lw*(.9+glow);ctx.beginPath();ctx.arc(hx+25,0,8.5+glow*2,0,7);ctx.stroke();
+  for(let k=0;k<7;k++){const a=k/7*Math.PI*2;pl([[hx+25+Math.cos(a)*8.5,Math.sin(a)*8.5],[hx+25+Math.cos(a)*5,Math.sin(a)*5]],ACC,lw*.6,false);}
+  for(const sg of [-1,1]){pl([[hx+21,sg*18],[hx+32,sg*26],[hx+39,sg*25]],col,lw*.8,false);ctx.strokeStyle="#35ff6a";ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(hx+8,sg*13,5,0,7);ctx.stroke();
+    ctx.fillStyle="#ff2a2a";ctx.beginPath();ctx.arc(hx+8+Math.cos(eyeA)*2.4*eyeM,sg*13+Math.sin(eyeA)*2.4*eyeM,2,0,7);ctx.fill();}
+  ctx.restore();
+  // aiming line while it winds up, so the shot can be dodged
+  const m0=tardiMouth(b);
+  if(tg.state==="windup"&&G.player.alive){ctx.save();ctx.setLineDash([6,8]);ctx.strokeStyle="rgba(255,154,46,.35)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(m0.x,m0.y);
+    const e=add(m0,mul(fwd(b.angle),CFG.tardiReach));ctx.lineTo(e.x,e.y);ctx.stroke();ctx.restore();}
+  if(tg.len>2){const tip=tardiTip(b),sp=squigglePoints(m0,tip,3,.07,G.frame*.4);
+    strokeOpenPoly(sp,COL.tardiTongue,CFG.tardiW*.8);strokeOpenPoly(sp,"#ffd9a0",3);
+    // sticky starfish tip: five tapering arms with a lighter centre, turning slowly
+    ctx.save();ctx.translate(tip.x,tip.y);ctx.rotate(G.frame*.04);ctx.beginPath();
+    for(let k=0;k<10;k++){const a=k*Math.PI/5-Math.PI/2,rr=k%2?4.5:13;k?ctx.lineTo(Math.cos(a)*rr,Math.sin(a)*rr):ctx.moveTo(Math.cos(a)*rr,Math.sin(a)*rr);}
+    ctx.closePath();ctx.fillStyle="rgba(255,48,48,.6)";ctx.strokeStyle=COL.tardiTip;ctx.lineWidth=2.4;ctx.lineJoin="round";ctx.fill();ctx.stroke();
+    ctx.fillStyle="#ffd9a0";for(let k=0;k<5;k++){const a=k*Math.PI*2/5-Math.PI/2;ctx.beginPath();ctx.arc(Math.cos(a)*7,Math.sin(a)*7,1.2,0,7);ctx.fill();}ctx.restore();}
+}
+function drawAmoebaBoss(b){
+  const t=G.frame/60,col=G.bossRage>0?COL.laserWarn:COL.bossAmoeba,pts=[],N=36;
+  for(let i=0;i<N;i++){const a=i/N*Math.PI*2,w=1+.09*Math.sin(a*3+t*1.6)+.06*Math.sin(a*5-t*2.1+b.n)+.04*Math.sin(a*2+t*.9);
+    pts.push(V(b.pos.x+Math.cos(a)*b.r*w,b.pos.y+Math.sin(a)*b.r*w));}
+  // tentacles first, so the body sits over their roots
+  for(const tn of b.tents){if(tn.len<=1)continue;const g=tentGeom(b,tn);
+    const sp=squigglePoints(g.a,g.b,4,.05,G.frame*.2+tn.seed);
+    strokeOpenPoly(sp,col,8);strokeOpenPoly(sp,COL.bossAmoebaLite,3);
+    // stag-beetle mandibles: two heavy, toothed horns that sweep out and hook inward, snapping open and shut as the tentacle comes
+    const ta=Math.atan2(g.b.y-g.a.y,g.b.x-g.a.x),open=.5+.5*Math.sin(G.frame*.2+tn.seed);
+    ctx.save();ctx.translate(g.b.x,g.b.y);ctx.rotate(ta);ctx.scale(.75,.75);ctx.lineJoin="round";ctx.lineWidth=1.8;
+    for(const sg of [-1,1]){
+      const A=11+15*open,sp=[],hw=u=>5.2*(1-u*.85)+.8;
+      for(let i=0;i<=10;i++){const u=i/10;sp.push([3+34*u-8*u*u*open,sg*(4+A*Math.sin(u*Math.PI*.82))]);}
+      const nrm=i=>{const a0=sp[Math.max(0,i-1)],a1=sp[Math.min(10,i+1)],dx=a1[0]-a0[0],dy=a1[1]-a0[1],l=Math.hypot(dx,dy)||1;return[-dy/l,dx/l];};
+      const outer=[],inner=[];
+      for(let i=0;i<=10;i++){const n=nrm(i),w=hw(i/10);outer.push([sp[i][0]+n[0]*w*sg*-1,sp[i][1]+n[1]*w*sg*-1]);inner.push([sp[i][0]+n[0]*w*sg,sp[i][1]+n[1]*w*sg]);}
+      const poly=outer.concat(inner.slice().reverse());
+      ctx.fillStyle="#1d0b2b";ctx.strokeStyle=col;ctx.beginPath();poly.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.closePath();ctx.fill();ctx.stroke();
+      ctx.fillStyle=col;for(const ti of [3,5,7]){const q=inner[ti],n=nrm(ti);ctx.beginPath();ctx.moveTo(q[0]-4,q[1]);ctx.lineTo(q[0]+n[0]*sg*5+1,q[1]+n[1]*sg*5);ctx.lineTo(q[0]+4,q[1]);ctx.fill();}
+    }
+    ctx.restore();}
+  ctx.fillStyle="rgba(8,6,14,.85)";ctx.beginPath();pts.forEach((q,i)=>i?ctx.lineTo(q.x,q.y):ctx.moveTo(q.x,q.y));ctx.closePath();ctx.fill();
+  strokePoly(pts,col,3);
+  const off=mul(fwd(b.angle),b.r*.12),c=add(b.pos,off); // nucleus drifts toward you
+  ctx.strokeStyle=COL.accent;ctx.lineWidth=2;ctx.beginPath();ctx.arc(c.x,c.y,b.r*.3,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle=COL.accent;ctx.beginPath();ctx.arc(c.x,c.y,b.r*.1,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle="rgba(178,102,255,.55)";ctx.lineWidth=1.5; // slow-drifting vacuoles
+  for(let k=0;k<4;k++){const a=t*.5+k*1.57+b.n,rr=b.r*(.55+.08*Math.sin(t+k)),vr=5+3*((k*7)%3);
+    ctx.beginPath();ctx.arc(b.pos.x+Math.cos(a)*rr,b.pos.y+Math.sin(a)*rr,vr,0,Math.PI*2);ctx.stroke();}
+}
+function drawBoss(b){
+  if(b.kind==="tardigrade")drawTardigradeBoss(b);else if(b.kind==="amoeba")drawAmoebaBoss(b);else
+  drawMutatedIcon(b.pos.x,b.pos.y,b.r,G.bossRage>0?COL.laserWarn:COL.boss,COL.hudDim,b.angle);
+  ctx.lineWidth=3;
+  if(b.kind==="virus"&&b.laserState==="warn"){const end=add(b.pos,mul(b.laserDir,1200));
+    const fl=.5+.5*Math.abs(Math.sin(performance.now()*.02));
+    const pts=squigglePoints(b.pos,end,5,.05,G.frame*.3);
+    strokeOpenPoly(pts,`rgba(255,60,60,${fl})`,1);
+  }else if(b.kind==="virus"&&b.laserState==="firing"){const end=add(b.pos,mul(b.laserDir,1200));
+    const pts=squigglePoints(b.pos,end,CFG.laserW*.9,.055,G.frame*.45);
+    strokeOpenPoly(pts,COL.laser,CFG.laserW);
+    strokeOpenPoly(pts,COL.laserWarn,Math.max(2,CFG.laserW/3));
+  }
+  const bw=120,bh=8,x=b.pos.x-bw/2,y=b.pos.y-b.r-22;
+  ctx.strokeStyle=COL.hudDim;ctx.lineWidth=1;ctx.strokeRect(x,y,bw,bh);
+  const frac=clamp(b.hp/b.maxHp,0,1);if(frac>0){ctx.fillStyle=b.kind==="amoeba"?COL.bossAmoeba:b.kind==="tardigrade"?COL.bossTardi:COL.boss;ctx.fillRect(x+1,y+1,(bw-2)*frac,bh-2);}
+}
+// Small scrolling EKG under the lives row (top right). Colour tracks the pulse: green while healthy,
+// amber on 1 spare life, red on the last life and when flatlined.
+function drawEcg(){
+  const h=G.heart;if(!h)return;
+  const w=160,x0=CFG.W-16-w,y0=36,hh=30,n=h.samples.length; // right edge, just under the row of lives
+  const col=h.flat||G.lives<=0?COL.laserWarn:G.lives===1?COL.flame:"#5aff8c";
+  ctx.save();
+  ctx.strokeStyle="rgba(120,150,160,.22)";ctx.lineWidth=1;ctx.strokeRect(x0+.5,y0+.5,w,hh);
+  ctx.beginPath();ctx.rect(x0,y0,w,hh);ctx.clip();
+  const base=y0+hh*.68,amp=hh*.58,seg=4,per=Math.ceil(n/seg);
+  ctx.lineWidth=1.6;ctx.lineJoin="round";
+  for(let s=0;s<seg;s++){ // older samples fade, like a phosphor trace
+    ctx.strokeStyle=col;ctx.globalAlpha=.3+.7*(s+1)/seg;
+    ctx.beginPath();
+    for(let i=s*per;i<=Math.min(n-1,(s+1)*per);i++){
+      const px=x0+i/(n-1)*w,py=base-h.samples[i]*amp;
+      if(i===s*per)ctx.moveTo(px,py);else ctx.lineTo(px,py);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;ctx.fillStyle=col;
+  ctx.beginPath();ctx.arc(x0+w-1.5,base-h.samples[n-1]*amp,2.2,0,7);ctx.fill();
+  ctx.restore();
+}
+function drawHud(){
+  ctx.textBaseline="top";ctx.fillStyle=COL.hud;ctx.font="bold 22px Consolas,monospace";
+  ctx.fillText(`SCORE ${String(G.score).padStart(6,"0")}`,16,12);
+  const lvl=G.bonus?`BONUS ROUND ${G.bonus.roundIndex}  -  WAVE ${Math.min(G.bonus.waveIndex+1,CFG.bonusWaves)}/${CFG.bonusWaves}`:
+    `LEVEL ${G.level}`+(isBossLevel(G.level)?" (BOSS)":"");
+  const w=ctx.measureText(lvl).width;ctx.fillText(lvl,CFG.W/2-w/2,12);
+  if(G.bonus&&(G.state==="bonuswave"||(G.state==="paused"&&G.pausedFrom==="bonuswave"))){
+    ctx.textAlign="center";ctx.fillStyle=COL.hudDim;ctx.font="13px Consolas,monospace";
+    const kn=G.bonus.wave.kinds.map(k=>BONUS_KIND_NAME[k]).join(" / ");
+    ctx.fillText(`HIT ${G.bonus.wave.killed}/${CFG.bonusSquadron}   ESCAPED ${G.bonus.wave.escaped}   ${kn}`,CFG.W/2,36);
+    ctx.textAlign="left";
+  }
+  drawEcg();
+  if(G.extraLifeFlash>0){
+    const a=clamp(G.extraLifeFlash/1.6,0,1);
+    ctx.fillStyle=`rgba(80,230,255,${a})`;ctx.font="bold 20px Consolas,monospace";
+    ctx.textAlign="center";ctx.fillText("EXTRA LIFE!",CFG.W/2,44);ctx.textAlign="left";
+  }
+  if(G.stallFlash>0){
+    const a=clamp(G.stallFlash/2.4,0,1);
+    ctx.fillStyle=`rgba(255,80,80,${a})`;ctx.font="bold 18px Consolas,monospace";
+    ctx.textAlign="center";ctx.fillText(G.stallMsg,CFG.W/2,44);ctx.textAlign="left";
+  }
+  const ships=Math.max(0,G.lives+1),shown=Math.min(ships,6); // past 6 ships, show 6 plus an "xN" count
+  for(let i=0;i<shown;i++){
+    const cx=CFG.W-30-i*26;
+    drawParts(PARTS.player,V(cx-1,20),0,COL.player,.42,1.5);
+  }
+  if(ships>6){
+    ctx.fillStyle=COL.player;ctx.font="bold 16px Consolas,monospace";ctx.textAlign="right";
+    ctx.fillText(`x${ships}`,CFG.W-30-5*26-18,12);ctx.textAlign="left";
+  }
+  ctx.font="15px Consolas,monospace";ctx.fillStyle=COL.missile;
+  ctx.fillText(`MISSILES ${G.player.msLeft}`,16,CFG.H-28);
+  ctx.font="13px Consolas,monospace";
+  if(G.boss){ctx.fillStyle=COL.boss;const t=BOSS_NAMES[G.boss.kind]||"VIRUS";
+    if(G.boss.kind==="tardigrade"&&G.boss.tongue.state==="stuck"){const fl=.6+.4*Math.abs(Math.sin(performance.now()*.012));ctx.save();ctx.textAlign="center";
+      ctx.fillStyle=`rgba(255,154,46,${fl})`;ctx.font="bold 24px Consolas,monospace";ctx.fillText("SHOOT THE TONGUE!",CFG.W/2,CFG.H-62);
+      ctx.fillStyle=COL.hud;ctx.font="15px Consolas,monospace";ctx.fillText(`BREAK FREE  ${G.boss.tongue.hits} / ${G.boss.grip}   (BULLETS ONLY)`,CFG.W/2,CFG.H-38);ctx.restore();}const tw=ctx.measureText(t).width;
+    ctx.fillText(t,CFG.W-tw-16,CFG.H-28);}
+}
+function centerText(title,sub){
+  ctx.textAlign="center";ctx.fillStyle=COL.white;ctx.font="bold 46px Consolas,monospace";
+  ctx.fillText(title,CFG.W/2,CFG.H/2-60);
+  ctx.fillStyle=COL.hudDim;ctx.font="15px Consolas,monospace";
+  ctx.fillText(sub,CFG.W/2,CFG.H/2+4);ctx.textAlign="left";
+}
+// "GAME OVER" zooms in from tiny to about a quarter of the screen's width,
+// then holds there - a vector-drawn punch instead of a static label.
+const GAMEOVER_ZOOM_T=.8,GAMEOVER_FINAL_SCALE=5.6;
+function drawGameOver(){
+  const t=clamp(G.gameOverAnimTime/GAMEOVER_ZOOM_T,0,1),ease=1-Math.pow(1-t,3);
+  const scale=GAMEOVER_FINAL_SCALE*(.04+.96*ease);
+  drawVText("GAME OVER",CFG.W/2,CFG.H/2-70,scale,COL.white,4,0);
+  ctx.textAlign="center";ctx.fillStyle=COL.hudDim;ctx.font="15px Consolas,monospace";
+  ctx.fillText(`Final Score: ${G.score}   Tap/Fire to continue`,CFG.W/2,CFG.H/2+20);ctx.textAlign="left";
+}
+function drawLevelClear(){
+  if(isBossLevel(G.level)){
+    ctx.textAlign="center";ctx.fillStyle=COL.boss;ctx.font="bold 26px Consolas,monospace";
+    ctx.fillText("BOSS DEFEATED",CFG.W/2,CFG.H/2-108);ctx.textAlign="left";
+  }
+  drawVText(`ZONE ${G.level} CLEARED`,CFG.W/2,CFG.H/2-40,9,"#5aff8c",4,0);
+  drawVText("GET READY",CFG.W/2,CFG.H/2+55,4.5,COL.hud,3,0);
+}
+const BONUS_KIND_NAME={kami:"BACTERIA",gun:"PHAGE",mine:"PARASITE",amoeba:"AMOEBA",worm:"WORM",flu:"VIRION",tardi:"TARDIGRADE"};
+function drawBonusIntro(){
+  const prog=clamp(1-G.bonus.introTimer/CFG.bonusIntroTime,0,1);
+  const scale=Math.min(8.5,3+7*prog*2.2);
+  drawVText("BONUS ROUND",CFG.W/2,CFG.H/2-55,scale,"#5aff8c",4,0);
+  ctx.textAlign="center";ctx.fillStyle=COL.hud;ctx.font="bold 20px Consolas,monospace";
+  ctx.fillText("GET READY!",CFG.W/2,CFG.H/2+35);
+  ctx.fillStyle=COL.hudDim;ctx.font="14px Consolas,monospace";
+  ctx.fillText(`Targets change every wave  -  hit ${Math.ceil(CFG.bonusSquadron*CFG.bonusMissilePct)} of ${CFG.bonusSquadron} for a missile`,CFG.W/2,CFG.H/2+62);
+  ctx.textAlign="left";
+}
+function drawBonusWaveResult(){
+  const w=G.bonus.wave,perfect=w.escaped===0;
+  ctx.textAlign="center";
+  drawVText(perfect?"WAVE CLEAR!":"WAVE COMPLETE",CFG.W/2,CFG.H/2-55,perfect?6:5,perfect?"#5aff8c":COL.hud,3.5,0);
+  ctx.fillStyle=COL.hud;ctx.font="bold 18px Consolas,monospace";
+  ctx.fillText(`Hit ${w.killed}/${CFG.bonusSquadron}`+(w.escaped?`   ${w.escaped} escaped`:""),CFG.W/2,CFG.H/2+14);
+  if(w.earnedMissile){ctx.fillStyle=COL.missile;ctx.font="bold 16px Consolas,monospace";ctx.fillText("+1 MISSILE",CFG.W/2,CFG.H/2+42);}
+  ctx.textAlign="left";
+}
+function drawBonusFinal(){
+  const b=G.bonus;
+  ctx.textAlign="center";
+  if(b.perfect){const pu=1+.06*Math.sin(performance.now()*.012);drawVText("PERFECT",CFG.W/2,CFG.H/2-215,10*pu,"#ffd24a",5,0);
+    ctx.fillStyle="#50e6ff";ctx.font="bold 22px Consolas,monospace";ctx.fillText("+1 EXTRA LIFE",CFG.W/2,CFG.H/2-150);}
+  drawVText("BONUS COMPLETE",CFG.W/2,CFG.H/2-70,5.6,"#5aff8c",3.5,0);
+  ctx.fillStyle=COL.hud;ctx.font="bold 18px Consolas,monospace";
+  ctx.fillText(`${b.totalKilled}/${CFG.bonusSquadron*CFG.bonusWaves} hit   ${b.totalEscaped} escaped`,CFG.W/2,CFG.H/2-10);
+  ctx.fillStyle=COL.missile;ctx.fillText(`${b.missilesEarned} missile${b.missilesEarned===1?"":"s"} earned`,CFG.W/2,CFG.H/2+18);
+  ctx.fillStyle=COL.hudDim;ctx.font="14px Consolas,monospace";
+  ctx.fillText("Next zone incoming...",CFG.W/2,CFG.H/2+54);
+  ctx.textAlign="left";
+}
+const ROSTER=[
+  {kind:"kami",parts:PARTS.kami,anim:flagellumParts,seed:0,col:COL.kami,scale:2.6,name:"BACTERIUM",desc:"Rams you",sc:CFG.scK},
+  {kind:"gun",parts:PARTS.gun,anim:phageLegParts,seed:300,col:COL.gun,scale:2.3,name:"PHAGE",desc:"Shoots from range",sc:CFG.scG},
+  {kind:"mine",parts:PARTS.mine,anim:parasiteLegParts,seed:600,col:COL.mine_,scale:1.4,name:"PARASITE",desc:"Drops larvae mines",sc:CFG.scM}];
+// Draws vector text with a 3D "sign-board" spin: a horizontal squash (never a
+// true rotation), so the glyphs' vertical footprint never grows and the title
+// can never clip off-canvas, however fast or far it "spins".
+function drawSpinTitle(str,cx,cy,scale,color,lw,flipDeg,t){
+  const sx=Math.cos(flipDeg*Math.PI/180);
+  ctx.save();ctx.translate(cx,cy);ctx.scale(Math.max(.06,Math.abs(sx)),1);
+  // Every letter also does its own full 360 turn, alternating clockwise / anticlockwise, all in sync:
+  // a 2s eased spin every 6s, so between spins the title reads correctly.
+  const ph=((t||0)%6)/2,e=ph<1?ph*ph*(3-2*ph):1;
+  const spacing=VFONT_W+1.1,totalW=(str.length*spacing-1.1)*scale;
+  for(let i=0;i<str.length;i++){
+    if(str[i]===" ")continue;
+    ctx.save();ctx.translate((i*spacing-(str.length*spacing-1.1)/2)*scale,0);ctx.rotate((i%2?-1:1)*e*Math.PI*2);
+    drawVText(str[i],VFONT_W/2*scale,0,scale,color,lw,0);ctx.restore();
+  }
+  ctx.restore();
+}
+function drawMenu(){
+  const t=G.menuAnimTime;
+  const scalePhase=(Math.sin(t*2*Math.PI/7)+1)/2;      // 0..1 breathing cycle, 7s period: large to small and back
+  const titleScale=6.8*(1+0.7*scalePhase);               // ~6.8x .. ~11.6x (longer title name, kept on-canvas at peak)
+  const flipDeg=(t*120)%360;                             // continuous sign-board spin, 3s/revolution
+  if(HiScores[0]){
+    ctx.textAlign="center";ctx.font="bold 14px Consolas,monospace";ctx.fillStyle=COL.hudDim;
+    ctx.fillText(`HIGH SCORE   ${HiScores[0].initials}   ${String(HiScores[0].score).padStart(6,"0")}`,CFG.W/2,18);
+  }
+  drawSpinTitle("NANITE VIGILANTE",CFG.W/2,130,titleScale,COL.player,4,flipDeg,t);
+
+  ctx.textAlign="center";ctx.font="12px Consolas,monospace";ctx.fillStyle=COL.hudDim;
+  ctx.fillText("By Vinaude Software",CFG.W/2,192);
+
+  ctx.textAlign="center";ctx.font="13px Consolas,monospace";ctx.fillStyle=COL.hudDim;
+  ctx.fillText("Pilot a nanite ship through the bloodstream - save humanity from bio-warfare.",CFG.W/2,212);
+  ctx.font="13px Consolas,monospace";
+  ctx.fillText("Every 4th zone: a mutated pathogen boss - Virus, Amoeba or Tardigrade.",CFG.W/2,234);
+
+  // Pathogen roster: vector icon, name, description, point value per type.
+  const xs=[250,500,750],ry=300;
+  for(let i=0;i<ROSTER.length;i++){
+    const r=ROSTER[i],cx=xs[i];
+    if(r.kind==="boss")drawMutatedIcon(cx,ry,26,r.col,COL.hudDim,t*20);
+    else{drawParts(r.parts,V(cx,ry),-90,r.col,r.scale);
+      drawParts(r.anim(r.seed,G.frame),V(cx,ry),-90,r.col,r.scale,r.kind==="mine"?1.3:2);}
+    ctx.fillStyle=r.col;ctx.font="bold 15px Consolas,monospace";
+    ctx.fillText(r.name,cx,ry+68);
+    ctx.fillStyle=COL.hudDim;ctx.font="12px Consolas,monospace";
+    ctx.fillText(r.desc,cx,ry+88);
+    ctx.fillStyle=COL.hud;ctx.font="bold 13px Consolas,monospace";
+    ctx.fillText(`${r.sc} PTS`,cx,ry+106);
+  }
+
+  // Boss row: the three pathogen bosses, each a small live drawing
+  ctx.textAlign="center";ctx.fillStyle=COL.boss;ctx.font="bold 15px Consolas,monospace";
+  ctx.fillText("MUTATED PATHOGEN",CFG.W/2,440);
+  ctx.fillStyle=COL.hudDim;ctx.font="12px Consolas,monospace";ctx.fillText(`Every 4th zone  -  ${CFG.scBoss} PTS`,CFG.W/2,458);
+  const by=512,bxs=[250,500,750];
+  drawMutatedIcon(bxs[0],by,30,COL.boss,COL.hudDim,t*20);
+  ctx.save();ctx.translate(bxs[1],by);ctx.scale(.46,.46);drawAmoebaBoss({pos:V(0,0),r:62,n:1,angle:t*20,tents:[]});ctx.restore();
+  ctx.save();ctx.translate(bxs[2],by);ctx.scale(.4,.4);drawTardigradeBoss({pos:V(0,0),angle:0,n:1,walk:t*3,tongue:{state:"idle",len:0,dir:V(1,0)}});ctx.restore();
+  ctx.font="bold 12px Consolas,monospace";
+  ctx.fillStyle=COL.boss;ctx.fillText("VIRUS",bxs[0],by+52);ctx.fillStyle=COL.bossAmoeba;ctx.fillText("AMOEBA",bxs[1],by+52);ctx.fillStyle=COL.bossTardi;ctx.fillText("TARDIGRADE",bxs[2],by+52);
+  ctx.fillStyle=COL.player;ctx.font="bold 15px Consolas,monospace";
+  ctx.fillText(`EXTRA LIFE EVERY ${CFG.extraLifeScore} POINTS`,CFG.W/2,592);
+
+  const lines=["Move: Arrows/WASD/Stick   Thrust: Up/W/Bumper/Touch button",
+    "Fire: Space/Button A/Touch   Missile+detonate: Shift/Button B/Touch",
+    "Pause: P/Esc     Start: Enter/Start/Tap"];
+  let y=624;ctx.font="14px Consolas,monospace";ctx.fillStyle=COL.hud;
+  for(const l of lines){ctx.fillText(l,CFG.W/2,y);y+=22;}
+
+  const pulse=.6+.4*Math.abs(Math.sin(t*3));
+  ctx.fillStyle=`rgba(80,230,255,${pulse})`;ctx.font="bold 19px Consolas,monospace";
+  ctx.fillText("PRESS ENTER / FIRE / TAP TO BEGIN",CFG.W/2,y+16);
+  ctx.textAlign="left";
+}
+
+// ---------- main loop ----------
+resetGame();
+// Shows the touch pause pill during a run (label flips to RESUME while paused) and hides it on every other screen.
+function syncPauseBtn(canPause){
+  const b=document.getElementById("btnPause");if(!b)return;
+  const on=Touch.active&&(canPause||G.state==="paused");
+  document.body.classList[on?"add":"remove"]("showpause");
+  const isP=G.state==="paused";
+  if(b.classList.contains("isPaused")!==isP){b.classList.toggle("isPaused",isP);b.setAttribute("aria-label",isP?"Resume":"Pause");}
+  // Sit just under the LEVEL title (canvas y~36) - and drop lower while the bonus-round status line or an EXTRA LIFE / enrage banner is on screen, so it never covers them.
+  const bonus=G.state==="bonuswave"||(G.state==="paused"&&G.pausedFrom==="bonuswave");
+  const units=bonus?58:(G.extraLifeFlash>0||G.stallFlash>0)?70:38;
+  if(b._units!==units||b._dirty!==false){
+    const cv=document.getElementById("cv"),sc=cv.clientWidth/CFG.W;
+    b.style.top=Math.round(cv.getBoundingClientRect().top+units*sc)+"px";b._units=units;b._dirty=false;
+  }
+}
+function autoPause(){ // phone call / app switch / screen lock: stop the world, stay paused until the player resumes
+  if(G&&(G.state==="playing"||G.state==="bonuswave")){G.pausedFrom=G.state;G.state="paused";}
+}
+function update(dt,inp){
+  checkLayout();
+  updateBackground(dt);
+  Hand.setVisible(G.state==="menu"||G.state==="gameover"); // hand-swap pill: title + game-over screens only
+  const canPause=G.state==="playing"||G.state==="bonuswave";
+  const wantPause=inp.pausePressed||Touch.pauseReq;Touch.pauseReq=false;
+  syncPauseBtn(canPause);
+  if(wantPause&&(canPause||G.state==="paused")){
+    if(G.state==="paused"){G.state=G.pausedFrom||"playing";G.pausedFrom=null;}
+    else{G.pausedFrom=G.state;G.state="paused";}
+    syncPauseBtn(G.state==="playing"||G.state==="bonuswave");return;
+  }
+  if(G.hitstopTimer>0){G.hitstopTimer-=dt;dt*=0.15;}
+  if(G.state!=="menu"&&G.state!=="paused"){tickEffects(dt);updateHeart(dt);}
+
+  if(G.state==="menu")Snd.musicStart();else Snd.musicStop(); // title theme plays only on the title screen
+  if(G.state==="menu"){
+    G.menuAnimTime+=dt;
+    G.menuTimer+=dt;
+    if(G.menuTimer>=(G.menuShowScores?5:20)){G.menuTimer=0;G.menuShowScores=!G.menuShowScores;}
+    if(inp.startPressed||inp.firePressed){resetGame();G.state="playing";startLevel(1);}
+  }else if(G.state==="playing"){updatePlaying(dt,inp);}
+  else if(G.state==="levelclear"){
+    G.levelClearTimer-=dt;
+    if(G.levelClearTimer<=0){
+      if(G.pendingBonusTier)startBonusRound();else startLevel(G.level+1);
+    }
+  }else if(G.state==="bonusintro"){
+    G.bonus.introTimer-=dt;if(G.bonus.introTimer<=0)startBonusWave(0);
+  }else if(G.state==="bonuswave"){updateBonusWave(dt,inp);}
+  else if(G.state==="bonuswaveresult"){
+    G.bonus.resultTimer-=dt;
+    if(G.bonus.resultTimer<=0){
+      if(G.bonus.waveIndex+1<CFG.bonusWaves)startBonusWave(G.bonus.waveIndex+1);
+      else{G.state="bonusfinal";G.bonus.finalTimer=CFG.bonusFinalTime;
+        G.player.thrusting=false;Snd.thrustStop();
+        if(G.bonus.totalKilled>=CFG.bonusSquadron*CFG.bonusWaves){G.bonus.perfect=true;G.lives++;G.extraLifeFlash=1.6;Snd.bugle();G.bonus.finalTimer=CFG.bonusFinalTime+1.6;}}
+    }
+  }else if(G.state==="bonusfinal"){
+    G.bonus.finalTimer-=dt;
+    if(G.bonus.finalTimer<=0){const lvl=G.bonus.returnLevel;G.bonus=null;startLevel(lvl);}
+  }else if(G.state==="gameover"){
+    G.gameOverAnimTime+=dt;
+    const ready=uiReady(inp,dt);
+    if(ready&&(inp.startPressed||inp.firePressed)){resetGame();G.state="menu";}
+  }else if(G.state==="hsintro"){ // beat of bare background + fanfare before the entry screen, for the "congratulations" feel
+    G.hsIntroTimer-=dt;if(G.hsIntroTimer<=0){G.state="enterinitials";lockUi(.6);Snd.highScoreFanfare();}
+  }else if(G.state==="enterinitials"){updateEnterInitials(inp,dt);}
+  else if(G.state==="highscores"){
+    const ready=uiReady(inp,dt);
+    if(ready&&(inp.startPressed||inp.firePressed)){resetGame();G.state="menu";}
+  }
+}
+function updateEnterInitials(inp,dt){
+  const ready=uiReady(inp,dt);
+  if(inp.leftPressed)G.initials[G.initialsIdx]=cycleChar(G.initials[G.initialsIdx],-1);
+  if(inp.rightPressed)G.initials[G.initialsIdx]=cycleChar(G.initials[G.initialsIdx],1);
+  if(inp.missilePressed&&G.initialsIdx>0)G.initialsIdx--;
+  if(ready&&(inp.firePressed||inp.startPressed)){
+    if(G.initialsIdx<2)G.initialsIdx++;
+    else{G.newHighScoreIdx=addHighScore(G.initials.join(""),G.pendingScore);G.state="highscores";lockUi(.8);}
+  }
+}
+let last=performance.now();
+function loop(now){
+  let dt=(now-last)/1000;last=now;dt=Math.min(dt,1/20);
+  G.frame++;
+  const inp=pollInput();
+  update(dt,inp);
+  draw();
+  requestAnimationFrame(loop);
+}
+function resize(){
+  const scale=Math.min(window.innerWidth/CFG.W,window.innerHeight/CFG.H);
+  const cv=document.getElementById("cv");
+  cv.style.width=(CFG.W*scale)+"px";cv.style.height=(CFG.H*scale)+"px";
+  // Portrait on a touch device: pin the play area to the top (below the status bar) so the controls get the empty space underneath it.
+  const portrait=window.innerHeight>window.innerWidth&&document.body.classList.contains("touchmode");
+  document.getElementById("wrap").style.alignItems=portrait?"flex-start":"center";
+  cv.style.marginTop=portrait?"calc(env(safe-area-inset-top,0px) + 6px)":"0";
+}
+function placeMute(){const b=document.getElementById("btnMute"),cv=document.getElementById("cv"),r=cv.getBoundingClientRect(),sc=cv.clientWidth/CFG.W;
+  b.style.left=Math.max(8,Math.round(r.left+10*sc))+"px";b.style.top=Math.max(8,Math.round(r.top+30*sc))+"px";}
+function syncMute(){const b=document.getElementById("btnMute"),m=Snd.isMuted();
+  b.classList.toggle("muted",m);b.setAttribute("aria-label",m?"Unmute sound":"Mute sound");
+  b.classList.toggle("hidden",Snd.status()==="unavailable");}
+function toggleMute(){Snd.unlock();Snd.setMuted(!Snd.isMuted());syncMute();}
+document.getElementById("btnMute").addEventListener("click",e=>{toggleMute();e.preventDefault();});
+// Controller in use hides the touch pad; any real touch (outside the small buttons) or unplugging the controller brings it back.
+window.addEventListener("touchstart",e=>{if(e.target.closest&&e.target.closest("#btnMute,#btnPause"))return;document.body.classList.remove("padmode");},{passive:true,capture:true});
+window.addEventListener("gamepaddisconnected",()=>document.body.classList.remove("padmode"));
+// Re-measure everything that is positioned from the canvas (canvas size, mute button, pause button).
+// Phones often fire resize/orientationchange BEFORE the new window size is settled, so rotation also
+// re-checks a few times afterwards, and a cheap per-frame signature check (checkLayout) catches anything missed.
+let _layoutSig="";
+function relayout(){document.documentElement.style.setProperty("--k",Math.max(1,Math.min(1.5,Math.min(window.innerWidth,window.innerHeight)/430)).toFixed(3));
+  resize();placeMute();const pb=document.getElementById("btnPause");if(pb)pb._dirty=true;
+  _layoutSig=layoutSig();}
+function layoutSig(){const vv=window.visualViewport;return window.innerWidth+"x"+window.innerHeight+"/"+(vv?Math.round(vv.width)+"x"+Math.round(vv.height):"");}
+function checkLayout(){if(layoutSig()!==_layoutSig)relayout();}
+window.addEventListener("resize",relayout);
+window.addEventListener("orientationchange",()=>{relayout();[80,250,600,1200].forEach(t=>setTimeout(relayout,t));});
+if(window.visualViewport)window.visualViewport.addEventListener("resize",relayout);
+relayout();syncMute();
+document.addEventListener("visibilitychange",()=>{if(document.hidden){autoPause();Snd.musicStop();}});
+window.addEventListener("pagehide",autoPause);
+document.getElementById("wrap").addEventListener("touchstart",()=>Snd.unlock());
+document.getElementById("wrap").addEventListener("click",()=>Snd.unlock());
+document.addEventListener("pointerdown",()=>Snd.unlock(),{passive:true});
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
